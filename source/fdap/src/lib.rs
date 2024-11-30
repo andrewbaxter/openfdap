@@ -45,7 +45,7 @@ impl Client {
         return ClientBuilder::default();
     }
 
-    fn build_path<T: AsRef<str>, I: Iterator<Item = T>>(&self, path: I) -> Uri {
+    fn build_path<'a>(&self, path: impl Iterator<Item = &'a dyn AsRef<str>>) -> Uri {
         let mut subpath = String::new();
         for (i, seg) in path.enumerate() {
             if i > 0 {
@@ -59,27 +59,24 @@ impl Client {
     /// Replace all data under `path`.
     pub async fn get<
         T: AsRef<str>,
-        I: IntoIterator<Item = T>,
+        I: AsRef<[T]>,
     >(&self, path: I, max_size: usize) -> Result<Option<serde_json::Value>, Error> {
-        let url = self.build_path(path.into_iter());
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
         let mut conn = htreq::connect(&url).await?;
         return Ok(htreq::get_json(&self.0.log, &mut conn, &url, &self.0.headers, max_size).await?);
     }
 
     /// Replace all data under `path`.
-    pub async fn set<
-        T: AsRef<str>,
-        I: IntoIterator<Item = T>,
-    >(&self, path: I, data: serde_json::Value) -> Result<(), Error> {
-        let url = self.build_path(path.into_iter());
+    pub async fn set<T: AsRef<str>, I: AsRef<[T]>>(&self, path: I, data: serde_json::Value) -> Result<(), Error> {
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
         let mut conn = htreq::connect(&url).await?;
         htreq::post_json::<()>(&self.0.log, &mut conn, &url, &self.0.headers, data, 100).await?;
         return Ok(());
     }
 
     /// Delete all data under `path`.
-    pub async fn delete<T: AsRef<str>, I: IntoIterator<Item = T>>(&self, path: I) -> Result<(), Error> {
-        let url = self.build_path(path.into_iter());
+    pub async fn delete<T: AsRef<str>, I: AsRef<[T]>>(&self, path: I) -> Result<(), Error> {
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
         let mut conn = htreq::connect(&url).await?;
         htreq::delete(&self.0.log, &mut conn, &url, &self.0.headers, 100).await?;
         return Ok(());
@@ -87,31 +84,49 @@ impl Client {
 
     /// Helper for getting under a user path.
     pub async fn user_get<
-        'a,
-    >(
-        &self,
-        user: &'a str,
-        path: impl IntoIterator<Item = &'a str>,
-        max_size: usize,
-    ) -> Result<Option<serde_json::Value>, Error> {
-        let url = self.build_path(Iterator::chain(["user", user].into_iter(), path.into_iter()));
+        T: AsRef<str>,
+        I: AsRef<[T]>,
+    >(&self, user: impl AsRef<str>, path: I, max_size: usize) -> Result<Option<serde_json::Value>, Error> {
+        let url =
+            self.build_path(
+                Iterator::chain(
+                    [&"user" as &dyn AsRef<str>, &user].into_iter(),
+                    path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
+                ),
+            );
         let mut conn = htreq::connect(&url).await?;
         return Ok(htreq::get_json(&self.0.log, &mut conn, &url, &self.0.headers, max_size).await?);
     }
 
     /// Helper for setting under a user path.
     pub async fn user_set<
-        'a,
-    >(&self, user: &'a str, path: impl IntoIterator<Item = &'a str>, data: serde_json::Value) -> Result<(), Error> {
-        let url = self.build_path(Iterator::chain(["user", user].into_iter(), path.into_iter()));
+        T: AsRef<str>,
+        I: AsRef<[T]>,
+    >(&self, user: impl AsRef<str>, path: I, data: serde_json::Value) -> Result<(), Error> {
+        let url =
+            self.build_path(
+                Iterator::chain(
+                    [&"user" as &dyn AsRef<str>, &user].into_iter(),
+                    path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
+                ),
+            );
         let mut conn = htreq::connect(&url).await?;
         htreq::post_json::<()>(&self.0.log, &mut conn, &url, &self.0.headers, data, 100).await?;
         return Ok(());
     }
 
     /// Helper for deleting under a user path.
-    pub async fn user_delete<'a>(&self, user: &'a str, path: impl IntoIterator<Item = &'a str>) -> Result<(), Error> {
-        let url = self.build_path(Iterator::chain(["user", user].into_iter(), path.into_iter()));
+    pub async fn user_delete<
+        T: AsRef<str>,
+        I: AsRef<[T]>,
+    >(&self, user: impl AsRef<str>, path: I) -> Result<(), Error> {
+        let url =
+            self.build_path(
+                Iterator::chain(
+                    [&"user" as &dyn AsRef<str>, &user].into_iter(),
+                    path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
+                ),
+            );
         let mut conn = htreq::connect(&url).await?;
         htreq::delete(&self.0.log, &mut conn, &url, &self.0.headers, 100).await?;
         return Ok(());

@@ -2,7 +2,7 @@
 
 ## Short
 
-This is a simple alternative to LDAP based around a single JSON tree and HTTP API.
+FDAP is a simple alternative to LDAP based around a single JSON tree and HTTP API.
 
 ## Longer
 
@@ -14,7 +14,7 @@ Rather than have each application maintain it's own per-user configuration or da
 
 FDAP (Featherweight Directory Access Protocol) is an iteration on the directory concept aiming to simplify and use common data interchange formats.
 
-## Details
+# The protocol
 
 The FDAP server maintains a list of applications and tokens, and which paths within the JSON they can access.
 

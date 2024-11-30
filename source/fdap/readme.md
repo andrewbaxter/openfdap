@@ -1,4 +1,4 @@
-This is an FDAP client library for Rust.
+This is a simple async FDAP client library for Rust.
 
 Install it with: `cargo add fdap`.
 

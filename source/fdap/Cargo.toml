@@ -2,6 +2,9 @@
 name = "fdap"
 version = "0.1.0"
 edition = "2021"
+license = "ISC"
+repository = "https://github.com/andrewbaxter/openfdap"
+readme = "readme.md"
 
 [dependencies]
 http = "1"
