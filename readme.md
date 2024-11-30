@@ -2,7 +2,7 @@
 
 ## Short
 
-This is an alternative to LDAP based around a simple, single JSON tree and HTTP API.
+This is a simple alternative to LDAP based around a single JSON tree and HTTP API.
 
 ## Longer
 
