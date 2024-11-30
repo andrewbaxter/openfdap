@@ -5,6 +5,7 @@ edition = "2021"
 license = "ISC"
 repository = "https://github.com/andrewbaxter/openfdap"
 readme = "readme.md"
+description = "Featherweight FDAP client library"
 
 [dependencies]
 http = "1"
