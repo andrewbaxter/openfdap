@@ -38,6 +38,7 @@ struct Client_ {
     headers: HashMap<String, String>,
 }
 
+#[derive(Clone)]
 pub struct Client(Arc<Client_>);
 
 impl Client {
