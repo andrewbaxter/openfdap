@@ -26,13 +26,18 @@ use {
         Log,
         ResultContext,
     },
+    openfdap::interface::config::{
+        AccessAction,
+        AccessPath,
+        AccessPathSeg,
+        Config,
+    },
     serde::{
         Deserialize,
         Serialize,
     },
     std::{
         borrow::Cow,
-        cmp::Ordering,
         collections::{
             BTreeMap,
             HashMap,
@@ -58,47 +63,6 @@ use {
     tokio_stream::wrappers::TcpListenerStream,
 };
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub struct AccessAction {
-    pub read: bool,
-    pub write: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum AccessPathSeg {
-    Wildcard,
-    String(String),
-}
-
-impl PartialOrd for AccessPathSeg {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        return Some(self.cmp(other));
-    }
-}
-
-impl Ord for AccessPathSeg {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (AccessPathSeg::Wildcard, AccessPathSeg::Wildcard) => Ordering::Equal,
-            (AccessPathSeg::Wildcard, AccessPathSeg::String(_)) => Ordering::Less,
-            (AccessPathSeg::String(_), AccessPathSeg::Wildcard) => Ordering::Greater,
-            (AccessPathSeg::String(a), AccessPathSeg::String(b)) => a.cmp(b),
-        }
-    }
-}
-
-pub type AccessPath = Vec<AccessPathSeg>;
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct Config {
-    bind_addr: String,
-    data_dir: PathBuf,
-    users: HashMap<String, Vec<(AccessPath, AccessAction)>>,
-}
-
 #[derive(Aargvark)]
 struct Args {
     config: Option<AargvarkJson<Config>>,
@@ -111,7 +75,7 @@ pub mod dbv1 {
     };
 
     #[derive(Clone, Serialize, Deserialize)]
-    #[serde(rename_all = "snake_case")]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub struct Database {
         pub version: usize,
         pub data: serde_json::Value,
@@ -121,7 +85,7 @@ pub mod dbv1 {
 pub use dbv1 as latest;
 
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum Database<'a> {
     V1(Cow<'a, dbv1::Database>),
 }
@@ -411,7 +375,11 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
             },
         }),
         db_path: db_path,
-        users: config.users.into_iter().map(|(k, v)| (k, v.into_iter().collect())).collect(),
+        users: config
+            .users
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().map(|p| (p.path, p.action)).collect()))
+            .collect(),
     });
 
     // Start server

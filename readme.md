@@ -28,8 +28,6 @@ The requests follow the format: `https://fdap_server/SEG1/SEG2/.../SEGN` where t
 
 - `DELETE` deletes the JSON subtree at the specified path
 
-By convention, user details are rooted at `user/USER_ID`.
-
 # What's in this repository
 
 There's two things:
@@ -37,3 +35,11 @@ There's two things:
 - `openfdap` - a simple reference implementation of an FDAP server
 
 - `fdap` - a Rust library for accessing an FDAP server
+
+# Standard ontology
+
+- `"user"` - record, each key corresponds to a user ID
+
+  - `USER_ID`
+
+    - `"name"` - The user's name in its canonical representation

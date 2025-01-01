@@ -35,3 +35,4 @@ sha2 = { version = "0.10" }
 urlencoding = "2"
 htwrap = "0.5"
 flowcontrol = "0.2"
+schemars = "0.8"
