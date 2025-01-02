@@ -383,7 +383,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
     });
 
     // Start server
-    tm.stream(
+    tm.critical_stream(
         format!("Http server - {}", config.bind_addr),
         TcpListenerStream::new(
             TcpListener::bind(&config.bind_addr).await.stack_context(&log, "Error binding to address")?,
@@ -399,7 +399,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
                         Ok(s) => s,
                         Err(e) => {
                             log.log_err(loga::DEBUG, e.context("Error opening peer stream"));
-                            return;
+                            return Ok(());
                         },
                     };
                     tokio::task::spawn({
@@ -413,6 +413,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
                             }
                         }
                     });
+                    return Ok(());
                 }
             }
         },
