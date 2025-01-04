@@ -5,7 +5,7 @@ use {
     },
     htwrap::{
         htreq,
-        UriJoin,
+        url::UriJoin,
     },
     loga::Log,
     std::{
@@ -213,7 +213,7 @@ impl ClientBuilder {
         return Ok(Client(Arc::new(Client_ {
             log: log,
             base_url: base_url,
-            headers: [(AUTHORIZATION.to_string(), format!("{}{}", htwrap::HEADER_BEARER_PREFIX, token))]
+            headers: [(AUTHORIZATION.to_string(), format!("{}{}", htwrap::constants::HEADER_BEARER_PREFIX, token))]
                 .into_iter()
                 .collect(),
         })));

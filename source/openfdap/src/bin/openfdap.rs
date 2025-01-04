@@ -10,20 +10,21 @@ use {
     http_body_util::BodyExt,
     htwrap::htserve::{
         self,
-        async_trait::async_trait,
-        get_auth_token,
-        response_200_json,
-        response_400,
-        response_401,
-        response_404,
-        response_503,
-        Body,
+        auth::get_auth_token,
+        handler::async_trait::async_trait,
+        responses::{
+            response_200_json,
+            response_400,
+            response_401,
+            response_404,
+            response_503,
+            Body,
+        },
     },
     hyper::Method,
     loga::{
         ea,
         ErrContext,
-        Log,
         ResultContext,
     },
     openfdap::interface::config::{
@@ -61,11 +62,20 @@ use {
         sync::RwLock,
     },
     tokio_stream::wrappers::TcpListenerStream,
+    tracing::{
+        debug,
+        instrument,
+        level_filters::LevelFilter,
+        warn,
+    },
 };
 
 #[derive(Aargvark)]
 struct Args {
+    /// Configuration JSON file
     config: Option<AargvarkJson<Config>>,
+    /// Enable debug logging
+    debug: Option<()>,
 }
 
 pub mod dbv1 {
@@ -93,23 +103,26 @@ enum Database<'a> {
 pub type Access = BTreeMap<AccessPath, AccessAction>;
 
 struct State {
-    log: Log,
     db_path: PathBuf,
     database: RwLock<latest::Database>,
     users: HashMap<String, Access>,
 }
 
 #[async_trait]
-impl htserve::Handler<Body> for State {
-    async fn handle(&self, args: htserve::HandlerArgs<'_>) -> http::Response<Body> {
-        let log = self.log.fork(ea!(path = args.head.uri, peer = args.peer_addr));
+impl htserve::handler::Handler<Body> for State {
+    #[instrument(skip_all, fields(path = args.head.uri.to_string(), peer = args.peer_addr.to_string()))]
+    async fn handle(&self, args: htserve::handler::HandlerArgs<'_>) -> http::Response<Body> {
         match async {
             ta_return!(http:: Response < Body >, loga::Error);
             let token = match get_auth_token(&args.head.headers) {
                 Ok(t) => t,
-                Err(_) => return Ok(response_401()),
+                Err(_) => {
+                    debug!("No auth token in request");
+                    return Ok(response_401());
+                },
             };
-            let Some(access) = self.users.get(&token) else {
+            let Some(grants) = self.users.get(&token) else {
+                debug!("No user in config for token");
                 return Ok(response_401());
             };
             let mut path = vec![];
@@ -120,18 +133,17 @@ impl htserve::Handler<Body> for State {
                 path.push(seg.clone());
                 access_path.push(AccessPathSeg::String(seg.to_string()));
             }
-            let access_actions;
+            debug!(path =? path, grants =? grants, "Checking path against grants");
+            let grants_actions;
             shed!{
                 'found _;
-                for(prefix, access) in access.range::< AccessPath,
+                for(prefix, grants) in grants.range::< AccessPath,
                 (
                     Bound <& AccessPath >,
                     Bound <& AccessPath >
                 ) >((Bound::Unbounded, Bound::Included(&access_path))).rev() {
-                    if !Iterator::zip(
-                        prefix.iter(),
-                        access_path.iter(),
-                    ).all(|(want_seg, have_seg)| match want_seg {
+                    eprintln!("checking access path at {:?}", prefix);
+                    if !Iterator::zip(prefix.iter(), access_path.iter()).all(|(want_seg, have_seg)| match want_seg {
                         AccessPathSeg::Wildcard => {
                             return true;
                         },
@@ -144,14 +156,16 @@ impl htserve::Handler<Body> for State {
                     }) {
                         break;
                     };
-                    access_actions = *access;
+                    grants_actions = *grants;
                     break 'found;
                 }
+                debug!(path =? path, "Found no actions granted at path");
                 return Ok(response_401());
             };
+            debug!(path =? path, actions =? grants_actions, "User granted actions at path");
             match args.head.method {
                 Method::HEAD => {
-                    if !access_actions.read {
+                    if !grants_actions.read {
                         return Ok(response_401());
                     }
                     let db = self.database.read().await;
@@ -162,7 +176,8 @@ impl htserve::Handler<Body> for State {
                     }
                 },
                 Method::GET => {
-                    if !access_actions.read {
+                    if !grants_actions.read {
+                        eprintln!("openfdap no read for path");
                         return Ok(response_401());
                     }
                     let db = self.database.read().await;
@@ -172,7 +187,8 @@ impl htserve::Handler<Body> for State {
                     return Ok(response_200_json(data));
                 },
                 Method::POST => {
-                    if !access_actions.write {
+                    if !grants_actions.write {
+                        eprintln!("openfdap no write for path");
                         return Ok(response_401());
                     }
                     let mut db_ref = self.database.write().await;
@@ -217,7 +233,7 @@ impl htserve::Handler<Body> for State {
                     return Ok(response_200_json(()));
                 },
                 Method::DELETE => {
-                    if !access_actions.write {
+                    if !grants_actions.write {
                         return Ok(response_401());
                     }
                     let mut db_ref = self.database.write().await;
@@ -287,7 +303,7 @@ impl htserve::Handler<Body> for State {
         }.await {
             Ok(r) => return r,
             Err(e) => {
-                log.log(loga::WARN, e.context("Error handling response"));
+                warn!(err =? e, "Error handling response");
                 return response_503();
             },
         }
@@ -332,7 +348,7 @@ async fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Err
     return Ok(());
 }
 
-async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
+async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
     // Get config (fallback to env, for use in ex: docker)
     let config = if let Some(p) = args.config {
         p.value
@@ -345,11 +361,10 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
             },
         },
     } {
-        let log = log.fork(ea!(source = "env"));
-        serde_json::from_str::<Config>(&c).stack_context(&log, "Parsing config")?
+        serde_json::from_str::<Config>(&c).context("Parsing config")?
     } else {
         return Err(
-            log.err_with("No config passed on command line, and no config set in env var", ea!(env = ENV_CONFIG)),
+            loga::err_with("No config passed on command line, and no config set in env var", ea!(env = ENV_CONFIG)),
         );
     };
 
@@ -357,7 +372,6 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
     create_dir_all(&config.data_dir).await.context("Error creating data dir")?;
     let db_path = config.data_dir.join("db.json");
     let state = Arc::new(State {
-        log: log.clone(),
         database: RwLock::new(match std::fs::read(&db_path) {
             Ok(db) => {
                 match serde_json::from_slice::<Database>(&db).context("Error parsing database")? {
@@ -385,30 +399,29 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
     // Start server
     tm.critical_stream(
         format!("Http server - {}", config.bind_addr),
-        TcpListenerStream::new(
-            TcpListener::bind(&config.bind_addr).await.stack_context(&log, "Error binding to address")?,
-        ),
+        TcpListenerStream::new(TcpListener::bind(&config.bind_addr).await.context("Error binding to address")?),
         {
-            let log = log.clone();
             let state = state.clone();
             move |stream| {
-                let log = log.clone();
                 let state = state.clone();
                 async move {
                     let stream = match stream {
                         Ok(s) => s,
                         Err(e) => {
-                            log.log_err(loga::DEBUG, e.context("Error opening peer stream"));
+                            debug!(err =? e, "Error opening peer stream");
                             return Ok(());
                         },
                     };
                     tokio::task::spawn({
-                        let log = log.clone();
                         async move {
-                            match htserve::root_handle_http(&log, state, stream).await {
+                            match htserve::handler::root_handle_http(
+                                &loga::Log::new_root(loga::INFO),
+                                state,
+                                stream,
+                            ).await {
                                 Ok(_) => (),
                                 Err(e) => {
-                                    log.log_err(loga::DEBUG, e.context("Error serving connection"));
+                                    debug!(err =? e, "Error serving connection");
                                 },
                             }
                         }
@@ -424,13 +437,19 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
 #[tokio::main]
 async fn main() {
     let args = aargvark::vark::<Args>();
-    let log = &Log::new_root(loga::INFO);
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt::Subscriber::builder().with_max_level(if args.debug.is_some() {
+            LevelFilter::DEBUG
+        } else {
+            LevelFilter::INFO
+        }).finish(),
+    ).unwrap();
     let tm = taskmanager::TaskManager::new();
-    match inner(log, &tm, args).await.map_err(|e| {
+    match inner(&tm, args).await.map_err(|e| {
         tm.terminate();
         return e;
     }).also({
-        tm.join(log).await.context("Critical services failed")
+        tm.join(&loga::Log::new_root(loga::INFO)).await.context("Critical services failed")
     }) {
         Ok(_) => { },
         Err(e) => {

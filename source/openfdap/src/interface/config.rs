@@ -11,14 +11,14 @@ use {
     },
 };
 
-#[derive(Serialize, Deserialize, Clone, Copy, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, Copy, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct AccessAction {
     pub read: bool,
     pub write: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum AccessPathSeg {
     Wildcard,
