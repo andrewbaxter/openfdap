@@ -127,11 +127,16 @@ impl htserve::handler::Handler<Body> for State {
             };
             let mut path = vec![];
             let mut access_path = vec![];
-            for seg in args.subpath.trim_matches('/').split("/") {
-                let seg =
-                    urlencoding::decode(&seg).context_with("Path segment can't be urldecoded", ea!(seg = seg))?;
-                path.push(seg.clone());
-                access_path.push(AccessPathSeg::String(seg.to_string()));
+            let subpath = args.subpath.trim_matches('/');
+            if subpath == "" {
+                // nop
+            } else {
+                for seg in subpath.split("/") {
+                    let seg =
+                        urlencoding::decode(&seg).context_with("Path segment can't be urldecoded", ea!(seg = seg))?;
+                    path.push(seg.clone());
+                    access_path.push(AccessPathSeg::String(seg.to_string()));
+                }
             }
             debug!(path =? path, grants =? grants, "Checking path against grants");
             let grants_actions;
@@ -142,8 +147,10 @@ impl htserve::handler::Handler<Body> for State {
                     Bound <& AccessPath >,
                     Bound <& AccessPath >
                 ) >((Bound::Unbounded, Bound::Included(&access_path))).rev() {
-                    eprintln!("checking access path at {:?}", prefix);
-                    if !Iterator::zip(prefix.iter(), access_path.iter()).all(|(want_seg, have_seg)| match want_seg {
+                    if !Iterator::zip(
+                        prefix.iter(),
+                        access_path.iter(),
+                    ).all(|(want_seg, have_seg)| match want_seg {
                         AccessPathSeg::Wildcard => {
                             return true;
                         },
@@ -177,7 +184,6 @@ impl htserve::handler::Handler<Body> for State {
                 },
                 Method::GET => {
                     if !grants_actions.read {
-                        eprintln!("openfdap no read for path");
                         return Ok(response_401());
                     }
                     let db = self.database.read().await;
@@ -188,7 +194,6 @@ impl htserve::handler::Handler<Body> for State {
                 },
                 Method::POST => {
                     if !grants_actions.write {
-                        eprintln!("openfdap no write for path");
                         return Ok(response_401());
                     }
                     let mut db_ref = self.database.write().await;
@@ -315,14 +320,19 @@ const ENV_CONFIG: &str = "OPENFDAP_CONFIG";
 fn db_get<'a, 'x>(db: &'a latest::Database, path: impl Iterator<Item = &'x str>) -> Option<&'a serde_json::Value> {
     let mut at = &db.data;
     for seg in path {
+        eprintln!("db_get seg {}", seg);
         match at {
             serde_json::Value::Object(m) => {
                 let Some(v) = m.get(seg) else {
+                    eprintln!(" -> no key {}", m.keys().cloned().collect::<Vec<_>>().join(", "));
                     return None;
                 };
                 at = v;
             },
-            _ => return None,
+            _ => {
+                eprintln!(" -> not obj but {:?}", at);
+                return None;
+            },
         }
     }
     return Some(at);
@@ -340,7 +350,8 @@ fn json_type(v: &serde_json::Value) -> &str {
 }
 
 async fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Error> {
-    let mut temp = NamedTempFile::new().context("Error creating temp file for atomic write")?;
+    let mut temp =
+        NamedTempFile::new_in(path.parent().unwrap()).context("Error creating temp file for atomic write")?;
     temp
         .write_all(serde_json::to_string(&data).unwrap().as_bytes())
         .context_with("Error writing temp file", ea!(path = temp.path().display()))?;

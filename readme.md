@@ -34,7 +34,11 @@ There's two things:
 
 - `openfdap` - a simple reference implementation of an FDAP server
 
+  [Documentation](./source/openfdap/readme.md)
+
 - `fdap` - a Rust library for accessing an FDAP server
+
+  [Documentation](./source/fdap/readme.md)
 
 # Standard ontology
 

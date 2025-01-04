@@ -4,6 +4,8 @@ At the moment it stores the config as a single file on disk updated with atomic 
 
 This also means that requests do not need to be paused to maintain consistency when taking backups.
 
+# Installation + setup
+
 Install it with: `cargo build`
 
 It requires a configuration file like:
@@ -13,8 +15,8 @@ It requires a configuration file like:
   "bind_addr": "127.0.0.1:17778",
   "data_dir": "/var/fdap/database.json",
   "users": {
-    "root_token": [[[], { "read": true, "write": true }]],
-    "app1_token": [
+    "ROOT_TOKEN": [[[], { "read": true, "write": true }]],
+    "APP1_TOKEN": [
       [
         [{ "string": "user" }, "wildcard", { "string": "email" }],
         {
@@ -41,3 +43,53 @@ It requires a configuration file like:
 - `users` is a mapping of application tokens to application access rules.
 
   Each rule is a pair, with the first element being a path made up of `string` and `wildcard` segments that's matched against the path of a request, and the second element being the allowed actions at that path.
+
+# Setting the config
+
+Make sure you create a root/admin user in the config above.
+
+This is optional, but you can create a JSON-Schema file `fdap.schema.json` your FDAP data like:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "sunwet": {
+      "$schema": "https://andrewbaxter.github.io/sunwet/jsonschema/fdap.schema.json"
+    },
+    "user": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fdap-oidc": {
+            "$schema": "https://andrewbaxter.github.io/fdap-oidc/jsonschema/fdap_user.schema.json"
+          },
+          "sunwet": {
+            "$schema": "https://andrewbaxter.github.io/sunwet/jsonschema/fdap_user.schema.json"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Then edit your FDAP data file `fdap.json` with:
+
+```json
+{
+  "$schema": "file://./fdap.schema.json",
+  ...
+}
+```
+
+And commit it with `curl -X POST https://my-fdap-server/ --header 'Authorization: Bearer ROOT_TOKEN' --data @fdap.json`.
+
+Note that this will replace all data at `/`. If applications are writing directly to `FDAP` you'll need to do more piecewise updates to individual subpaths.

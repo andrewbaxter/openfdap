@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "type": "object",
+  "required": [
+    "bind_addr",
+    "data_dir",
+    "users"
+  ],
+  "properties": {
+    "bind_addr": {
+      "description": "Address to serve on, like `0.0.0.0:64116`",
+      "type": "string"
+    },
+    "data_dir": {
+      "description": "Directory in which to store database, will be created if it doesn't exist",
+      "type": "string"
+    },
+    "users": {
+      "description": "Mapping of application IDs to pairs of",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/AccessPair"
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AccessAction": {
+      "type": "object",
+      "required": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AccessPair": {
+      "type": "object",
+      "required": [
+        "action",
+        "path"
+      ],
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/AccessAction"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AccessPathSeg"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "AccessPathSeg": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "wildcard"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "string"
+          ],
+          "properties": {
+            "string": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
