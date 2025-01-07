@@ -320,17 +320,14 @@ const ENV_CONFIG: &str = "OPENFDAP_CONFIG";
 fn db_get<'a, 'x>(db: &'a latest::Database, path: impl Iterator<Item = &'x str>) -> Option<&'a serde_json::Value> {
     let mut at = &db.data;
     for seg in path {
-        eprintln!("db_get seg {}", seg);
         match at {
             serde_json::Value::Object(m) => {
                 let Some(v) = m.get(seg) else {
-                    eprintln!(" -> no key {}", m.keys().cloned().collect::<Vec<_>>().join(", "));
                     return None;
                 };
                 at = v;
             },
             _ => {
-                eprintln!(" -> not obj but {:?}", at);
                 return None;
             },
         }
