@@ -24,7 +24,9 @@ use {
     hyper::Method,
     loga::{
         ea,
+        DebugDisplay,
         ErrContext,
+        Log,
         ResultContext,
     },
     openfdap::interface::config::{
@@ -62,12 +64,6 @@ use {
         sync::RwLock,
     },
     tokio_stream::wrappers::TcpListenerStream,
-    tracing::{
-        debug,
-        instrument,
-        level_filters::LevelFilter,
-        warn,
-    },
 };
 
 #[derive(Aargvark)]
@@ -103,6 +99,7 @@ enum Database<'a> {
 pub type Access = BTreeMap<AccessPath, AccessAction>;
 
 struct State {
+    log: Log,
     db_path: PathBuf,
     database: RwLock<latest::Database>,
     users: HashMap<String, Access>,
@@ -110,19 +107,19 @@ struct State {
 
 #[async_trait]
 impl htserve::handler::Handler<Body> for State {
-    #[instrument(skip_all, fields(path = args.head.uri.to_string(), peer = args.peer_addr.to_string()))]
     async fn handle(&self, args: htserve::handler::HandlerArgs<'_>) -> http::Response<Body> {
+        let log = self.log.fork(ea!(path = args.head.uri, peer = args.peer_addr));
         match async {
             ta_return!(http:: Response < Body >, loga::Error);
             let token = match get_auth_token(&args.head.headers) {
                 Ok(t) => t,
                 Err(_) => {
-                    debug!("No auth token in request");
+                    log.log(loga::DEBUG, "No auth token in request");
                     return Ok(response_401());
                 },
             };
             let Some(grants) = self.users.get(&token) else {
-                debug!("No user in config for token");
+                log.log(loga::DEBUG, "No user in config for token");
                 return Ok(response_401());
             };
             let mut path = vec![];
@@ -138,7 +135,11 @@ impl htserve::handler::Handler<Body> for State {
                     access_path.push(AccessPathSeg::String(seg.to_string()));
                 }
             }
-            debug!(path =? path, grants =? grants, "Checking path against grants");
+            log.log_with(
+                loga::DEBUG,
+                "Checking path against grants",
+                ea!(path = path.dbg_str(), grants = grants.dbg_str()),
+            );
             let grants_actions;
             shed!{
                 'found _;
@@ -166,10 +167,14 @@ impl htserve::handler::Handler<Body> for State {
                     grants_actions = *grants;
                     break 'found;
                 }
-                debug!(path =? path, "Found no actions granted at path");
+                log.log_with(loga::DEBUG, "Found no actions granted at path", ea!(path = path.dbg_str()));
                 return Ok(response_401());
             };
-            debug!(path =? path, actions =? grants_actions, "User granted actions at path");
+            log.log_with(
+                loga::DEBUG,
+                "User granted actions at path",
+                ea!(path = path.dbg_str(), actions = grants_actions.dbg_str()),
+            );
             match args.head.method {
                 Method::HEAD => {
                     if !grants_actions.read {
@@ -308,7 +313,7 @@ impl htserve::handler::Handler<Body> for State {
         }.await {
             Ok(r) => return r,
             Err(e) => {
-                warn!(err =? e, "Error handling response");
+                log.log_err(loga::WARN, e.context("Error handling response"));
                 return response_503();
             },
         }
@@ -356,7 +361,7 @@ async fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Err
     return Ok(());
 }
 
-async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
+async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
     // Get config (fallback to env, for use in ex: docker)
     let config = if let Some(p) = args.config {
         p.value
@@ -380,6 +385,7 @@ async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
     create_dir_all(&config.data_dir).await.context("Error creating data dir")?;
     let db_path = config.data_dir.join("db.json");
     let state = Arc::new(State {
+        log: log.clone(),
         database: RwLock::new(match std::fs::read(&db_path) {
             Ok(db) => {
                 match serde_json::from_slice::<Database>(&db).context("Error parsing database")? {
@@ -410,13 +416,15 @@ async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
         TcpListenerStream::new(TcpListener::bind(&config.bind_addr).await.context("Error binding to address")?),
         {
             let state = state.clone();
+            let log = log.clone();
             move |stream| {
                 let state = state.clone();
+                let log = log.clone();
                 async move {
                     let stream = match stream {
                         Ok(s) => s,
                         Err(e) => {
-                            debug!(err =? e, "Error opening peer stream");
+                            log.log(loga::DEBUG, e.context("Error opening peer stream"));
                             return Ok(());
                         },
                     };
@@ -429,7 +437,7 @@ async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
                             ).await {
                                 Ok(_) => (),
                                 Err(e) => {
-                                    debug!(err =? e, "Error serving connection");
+                                    log.log_err(loga::DEBUG, e.context("Error serving connection"));
                                 },
                             }
                         }
@@ -445,19 +453,16 @@ async fn inner(tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
 #[tokio::main]
 async fn main() {
     let args = aargvark::vark::<Args>();
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt::Subscriber::builder().with_max_level(if args.debug.is_some() {
-            LevelFilter::DEBUG
-        } else {
-            LevelFilter::INFO
-        }).finish(),
-    ).unwrap();
+    let log = Log::new_root(match args.debug.is_some() {
+        true => loga::DEBUG,
+        false => loga::INFO,
+    });
     let tm = taskmanager::TaskManager::new();
-    match inner(&tm, args).await.map_err(|e| {
+    match inner(&log, &tm, args).await.map_err(|e| {
         tm.terminate();
         return e;
     }).also({
-        tm.join(&loga::Log::new_root(loga::INFO)).await.context("Critical services failed")
+        tm.join(&log).await.context("Critical services failed")
     }) {
         Ok(_) => { },
         Err(e) => {
