@@ -70,6 +70,8 @@ use {
 struct Args {
     /// Configuration JSON file
     config: Option<AargvarkJson<Config>>,
+    /// Check the config then exit
+    validate: Option<()>,
     /// Enable debug logging
     debug: Option<()>,
 }
@@ -453,6 +455,9 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
 #[tokio::main]
 async fn main() {
     let args = aargvark::vark::<Args>();
+    if args.validate.is_some() {
+        return;
+    }
     let log = Log::new_root(match args.debug.is_some() {
         true => loga::DEBUG,
         false => loga::INFO,
