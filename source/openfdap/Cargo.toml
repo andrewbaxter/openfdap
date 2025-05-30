@@ -33,6 +33,6 @@ tokio-stream = { version = "0.1", features = ["net"] }
 zbase32 = "0.1"
 sha2 = { version = "0.10" }
 urlencoding = "2"
-htwrap = "0.11"
+htwrap = { version = "0.11" }
 flowcontrol = "0.2"
 schemars = "0.8"

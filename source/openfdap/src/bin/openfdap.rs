@@ -110,7 +110,7 @@ struct State {
 #[async_trait]
 impl htserve::handler::Handler<Body> for State {
     async fn handle(&self, args: htserve::handler::HandlerArgs<'_>) -> http::Response<Body> {
-        let log = self.log.fork(ea!(path = args.head.uri, peer = args.peer_addr));
+        let log = self.log.fork(ea!(path = args.url, peer = args.peer_addr));
         match async {
             ta_return!(http:: Response < Body >, loga::Error);
             let token = match get_auth_token(&args.head.headers) {
@@ -432,11 +432,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
                     };
                     tokio::task::spawn({
                         async move {
-                            match htserve::handler::root_handle_http(
-                                &loga::Log::new_root(loga::INFO),
-                                state,
-                                stream,
-                            ).await {
+                            match htserve::handler::root_handle_http(&log, state, stream).await {
                                 Ok(_) => (),
                                 Err(e) => {
                                     log.log_err(loga::DEBUG, e.context("Error serving connection"));
