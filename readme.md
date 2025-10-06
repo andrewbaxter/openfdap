@@ -6,19 +6,21 @@ FDAP is a simple alternative to LDAP based around a single JSON tree and HTTP AP
 
 ## Longer
 
-When deploying multiple server software they'll often have duplicate configuration that's unique to the deployment environment. Namely, user accounts, and configuration properties of those user accounts.
+FDAP (Featherweight Directory Access Protocol) is an iteration on the LDAP concept aiming to simplify and use common data interchange formats (via standard HTTP and JSON). FDAP defines a config/directory server. You can store configs in it, and applications can be configured to read configs from it.
 
-So an SSO gateway would read user accounts for authentication details, various servers would read user accounts for access details, or user details (email, profile picture), etc.
+Why have applications get their config from FDAP instead of local config files?
 
-Rather than have each application maintain it's own per-user configuration or database that needs to be synced, you'd put all this information in the user directory (LDAP).
+- It allows you to have mutable configs for applications on otherwise immutable systems
 
-FDAP (Featherweight Directory Access Protocol) is an iteration on the directory concept aiming to simplify and use common data interchange formats.
+- It centralizes configuration; modify configs in one place to have it apply everywhere
+
+- To back configs up, you only have to back up FDAP
 
 # The protocol
 
 The FDAP server maintains a list of applications and tokens, and which paths within the JSON they can access.
 
-Clients (applications) make http requests to the server with a token in an `Authorization: Bearer` header. By default the token is in the `FDAP_TOKEN` environment variable.
+Clients (applications) make http requests to the server with a token in an `Authorization: Bearer` header. By default clients read the token from the `FDAP_TOKEN` environment variable.
 
 The requests follow the format: `https://fdap_server/SEG1/SEG2/.../SEGN` where the `SEG` path segments are the path in the JSON (successive map keys or array indexes from the configuration root). By default the fdap server base url is in the `FDAP_BASE_URL` environment variable and may include path segments to preceed the `SEG` above if the server is colocated in an HTTP server at a subpath.
 
