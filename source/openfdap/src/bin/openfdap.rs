@@ -1,4 +1,5 @@
 use {
+    crate::dball::DbVersion,
     aargvark::{
         traits_impls::AargvarkJson,
         Aargvark,
@@ -7,12 +8,22 @@ use {
         shed,
         ta_return,
     },
+    http::{
+        header::{
+            CONTENT_TYPE,
+            ETAG,
+            IF_NONE_MATCH,
+        },
+        Response,
+    },
     http_body_util::BodyExt,
     htwrap::htserve::{
         self,
         auth::get_auth_token,
         handler::async_trait::async_trait,
         responses::{
+            body_full,
+            body_json,
             response_200_json,
             response_400,
             response_401,
@@ -54,14 +65,16 @@ use {
             Path,
             PathBuf,
         },
-        sync::Arc,
+        sync::{
+            Arc,
+            RwLock,
+        },
     },
     taskmanager::TaskManager,
     tempfile::NamedTempFile,
     tokio::{
         fs::create_dir_all,
         net::TcpListener,
-        sync::RwLock,
     },
     tokio_stream::wrappers::TcpListenerStream,
 };
@@ -76,18 +89,38 @@ struct Args {
     debug: Option<()>,
 }
 
+pub mod dball {
+    pub type DbVersion = usize;
+}
+
 pub mod dbv1 {
-    use serde::{
-        Deserialize,
-        Serialize,
+    use {
+        serde::{
+            Deserialize,
+            Serialize,
+        },
+        crate::dball::DbVersion,
     };
 
     #[derive(Clone, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub struct Database {
-        pub version: usize,
+        pub version: DbVersion,
         pub data: serde_json::Value,
     }
+}
+
+fn format_etag(ver: DbVersion) -> String {
+    return format!("\"{}\"", ver);
+}
+
+fn response_200_json_etag(v: impl Serialize, etag: String) -> Response<Body> {
+    return Response::builder()
+        .status(200)
+        .header(CONTENT_TYPE, "application/json")
+        .header(ETAG, etag)
+        .body(body_json(v))
+        .unwrap();
 }
 
 pub use dbv1 as latest;
@@ -99,12 +132,14 @@ enum Database<'a> {
 }
 
 pub type Access = BTreeMap<AccessPath, AccessAction>;
+pub type DataPath = Vec<String>;
 
 struct State {
     log: Log,
     db_path: PathBuf,
     database: RwLock<latest::Database>,
     users: HashMap<String, Access>,
+    etags: RwLock<BTreeMap<DataPath, DbVersion>>,
 }
 
 #[async_trait]
@@ -124,8 +159,8 @@ impl htserve::handler::Handler<Body> for State {
                 log.log(loga::DEBUG, "No user in config for token");
                 return Ok(response_401());
             };
-            let mut path = vec![];
-            let mut access_path = vec![];
+            let mut path: DataPath = vec![];
+            let mut access_path: AccessPath = vec![];
             let subpath = args.subpath.trim_matches('/');
             if subpath == "" {
                 // nop
@@ -133,7 +168,7 @@ impl htserve::handler::Handler<Body> for State {
                 for seg in subpath.split("/") {
                     let seg =
                         urlencoding::decode(&seg).context_with("Path segment can't be urldecoded", ea!(seg = seg))?;
-                    path.push(seg.clone());
+                    path.push(seg.to_string());
                     access_path.push(AccessPathSeg::String(seg.to_string()));
                 }
             }
@@ -178,32 +213,47 @@ impl htserve::handler::Handler<Body> for State {
                 ea!(path = path.dbg_str(), actions = grants_actions.dbg_str()),
             );
             match args.head.method {
-                Method::HEAD => {
+                Method::HEAD | Method::GET => {
                     if !grants_actions.read {
                         return Ok(response_401());
                     }
-                    let db = self.database.read().await;
-                    if db_get(&db, path.iter().map(|x| x.as_ref())).is_some() {
-                        return Ok(response_200_json(()));
+                    shed!{
+                        let Some(if_ver) = args.head.headers.get(IF_NONE_MATCH) else {
+                            break;
+                        };
+                        let etags = self.etags.read().unwrap();
+                        let Some(&stored_ver) = etags.get(&path) else {
+                            break;
+                        };
+                        let etag = format_etag(stored_ver);
+                        if if_ver != etag.as_bytes() {
+                            break;
+                        }
+                        return Ok(Response::builder().status(304).body(body_full(vec![])).unwrap());
+                    }
+                    let db = self.database.read().unwrap();
+                    if let Some((data, ver)) = get(&db, &self.etags, &path) {
+                        let etag = format_etag(ver);
+                        if args.head.method == Method::HEAD {
+                            return Ok(response_200_json_etag((), etag));
+                        } else {
+                            return Ok(response_200_json_etag(data, etag));
+                        }
                     } else {
                         return Ok(response_404());
                     }
-                },
-                Method::GET => {
-                    if !grants_actions.read {
-                        return Ok(response_401());
-                    }
-                    let db = self.database.read().await;
-                    let Some(data) = db_get(&db, path.iter().map(|x| x.as_ref())) else {
-                        return Ok(response_404());
-                    };
-                    return Ok(response_200_json(data));
                 },
                 Method::POST => {
                     if !grants_actions.write {
                         return Ok(response_401());
                     }
-                    let mut db_ref = self.database.write().await;
+                    let data =
+                        serde_json::from_slice::<serde_json::Value>(
+                            args.body.collect().await.context("Error reading request body")?.to_bytes().as_ref(),
+                        ).context("Got invalid json in POST")?;
+
+                    // # Sync code
+                    let mut db_ref = self.database.write().unwrap();
                     let mut db = db_ref.clone();
                     db.version += 1;
                     let mut at = &mut db.data;
@@ -215,10 +265,10 @@ impl htserve::handler::Handler<Body> for State {
                                     let serde_json::Value::Object(map) = at else {
                                         panic!();
                                     };
-                                    at = map.entry(seg.as_ref()).or_insert_with(|| serde_json::Value::Null);
+                                    at = map.entry(seg).or_insert_with(|| serde_json::Value::Null);
                                 },
                                 serde_json::Value::Object(map) => {
-                                    at = map.entry(seg.as_ref()).or_insert_with(|| serde_json::Value::Null);
+                                    at = map.entry(seg).or_insert_with(|| serde_json::Value::Null);
                                 },
                                 _ => {
                                     return Ok(
@@ -234,13 +284,12 @@ impl htserve::handler::Handler<Body> for State {
                             }
                         }
                     }
-                    *at =
-                        serde_json::from_slice::<serde_json::Value>(
-                            args.body.collect().await.context("Error reading request body")?.to_bytes().as_ref(),
-                        ).context("Got invalid json in POST")?;
-                    atomic_write(&self.db_path, Database::V1(Cow::Borrowed(&db)))
-                        .await
-                        .context("Failed to write database changes")?;
+                    *at = data;
+                    atomic_write(
+                        &self.db_path,
+                        Database::V1(Cow::Borrowed(&db)),
+                    ).context("Failed to write database changes")?;
+                    wipe_etags(self, &path, Some(db.version));
                     *db_ref = db;
                     return Ok(response_200_json(()));
                 },
@@ -248,7 +297,9 @@ impl htserve::handler::Handler<Body> for State {
                     if !grants_actions.write {
                         return Ok(response_401());
                     }
-                    let mut db_ref = self.database.write().await;
+
+                    // # Sync code
+                    let mut db_ref = self.database.write().unwrap();
                     let mut db = db_ref.clone();
                     db.version += 1;
                     match path.pop() {
@@ -257,7 +308,7 @@ impl htserve::handler::Handler<Body> for State {
                             for (i, seg) in path.iter().enumerate() {
                                 match at {
                                     serde_json::Value::Object(map) => {
-                                        at = match map.get_mut(seg.as_ref()) {
+                                        at = match map.get_mut(seg) {
                                             Some(e) => e,
                                             None => {
                                                 return Ok(
@@ -283,7 +334,7 @@ impl htserve::handler::Handler<Body> for State {
                             }
                             match at {
                                 serde_json::Value::Object(map) => {
-                                    map.remove(last_seg.as_ref());
+                                    map.remove(&last_seg);
                                 },
                                 _ => {
                                     return Ok(
@@ -302,9 +353,11 @@ impl htserve::handler::Handler<Body> for State {
                             db.data = serde_json::Value::Null;
                         },
                     }
-                    atomic_write(&self.db_path, Database::V1(Cow::Borrowed(&db)))
-                        .await
-                        .context("Failed to write database changes")?;
+                    atomic_write(
+                        &self.db_path,
+                        Database::V1(Cow::Borrowed(&db)),
+                    ).context("Failed to write database changes")?;
+                    wipe_etags(self, &path, None);
                     *db_ref = db;
                     return Ok(response_200_json(()));
                 },
@@ -324,7 +377,33 @@ impl htserve::handler::Handler<Body> for State {
 
 const ENV_CONFIG: &str = "OPENFDAP_CONFIG";
 
-fn db_get<'a, 'x>(db: &'a latest::Database, path: impl Iterator<Item = &'x str>) -> Option<&'a serde_json::Value> {
+fn wipe_etags(self0: &State, at: &DataPath, replace: Option<DbVersion>) {
+    let mut etags = self0.etags.write().unwrap();
+    for prefix in 0 .. at.len() {
+        etags.remove(&at[0 .. prefix]);
+    }
+    let mut suffixes = vec![];
+    for (k, _v) in etags.range((Bound::Included(at.clone()), Bound::Unbounded)) {
+        if !k.starts_with(&at) {
+            break;
+        }
+        suffixes.push(k.clone());
+    }
+    for k in suffixes {
+        etags.remove(&k);
+    }
+    if let Some(v) = replace {
+        etags.insert(at.clone(), v);
+    }
+}
+
+fn get<
+    'a,
+>(
+    db: &'a latest::Database,
+    etags: &RwLock<BTreeMap<DataPath, DbVersion>>,
+    path: &DataPath,
+) -> Option<(&'a serde_json::Value, DbVersion)> {
     let mut at = &db.data;
     for seg in path {
         match at {
@@ -339,7 +418,16 @@ fn db_get<'a, 'x>(db: &'a latest::Database, path: impl Iterator<Item = &'x str>)
             },
         }
     }
-    return Some(at);
+    {
+        let etags = etags.read().unwrap();
+        for prefix in (0 ..= path.len()).rev() {
+            if let Some(&ver) = etags.get(&path[0 .. prefix]) {
+                return Some((at, ver));
+            }
+        }
+    }
+    etags.write().unwrap().insert(path.clone(), db.version);
+    return Some((at, db.version));
 }
 
 fn json_type(v: &serde_json::Value) -> &str {
@@ -353,7 +441,7 @@ fn json_type(v: &serde_json::Value) -> &str {
     };
 }
 
-async fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Error> {
+fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Error> {
     let mut temp =
         NamedTempFile::new_in(path.parent().unwrap()).context("Error creating temp file for atomic write")?;
     temp
@@ -410,12 +498,17 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
             .into_iter()
             .map(|(k, v)| (k, v.into_iter().map(|p| (p.path, p.action)).collect()))
             .collect(),
+        etags: Default::default(),
     });
 
     // Start server
     tm.critical_stream(
         format!("Http server - {}", config.bind_addr),
-        TcpListenerStream::new(TcpListener::bind(&config.bind_addr).await.context("Error binding to address")?),
+        TcpListenerStream::new(
+            TcpListener::bind(&config.bind_addr)
+                .await
+                .context_with("Error binding to address", ea!(addr = config.bind_addr))?,
+        ),
         {
             let state = state.clone();
             let log = log.clone();

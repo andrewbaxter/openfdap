@@ -61,25 +61,28 @@ impl Client {
     pub async fn get<
         T: AsRef<str>,
         I: AsRef<[T]>,
-    >(&self, path: I, max_size: usize) -> Result<Option<serde_json::Value>, Error> {
+    >(&self, limits: htreq::Limits, path: I) -> Result<Option<serde_json::Value>, Error> {
         let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
-        let mut conn = htreq::connect(&url).await?;
-        return Ok(htreq::get_json(&self.0.log, &mut conn, &url, &self.0.headers, max_size).await?);
+        let mut conn = htreq::connect(limits, &url).await?;
+        return Ok(htreq::get_json(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?);
     }
 
     /// Replace all data under `path`.
-    pub async fn set<T: AsRef<str>, I: AsRef<[T]>>(&self, path: I, data: serde_json::Value) -> Result<(), Error> {
+    pub async fn set<
+        T: AsRef<str>,
+        I: AsRef<[T]>,
+    >(&self, limits: htreq::Limits, path: I, data: serde_json::Value) -> Result<(), Error> {
         let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
-        let mut conn = htreq::connect(&url).await?;
-        htreq::post_json::<()>(&self.0.log, &mut conn, &url, &self.0.headers, data, 100).await?;
+        let mut conn = htreq::connect(limits, &url).await?;
+        htreq::post_json::<()>(&self.0.log, limits, &mut conn, &url, &self.0.headers, data).await?;
         return Ok(());
     }
 
     /// Delete all data under `path`.
-    pub async fn delete<T: AsRef<str>, I: AsRef<[T]>>(&self, path: I) -> Result<(), Error> {
+    pub async fn delete<T: AsRef<str>, I: AsRef<[T]>>(&self, limits: htreq::Limits, path: I) -> Result<(), Error> {
         let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
-        let mut conn = htreq::connect(&url).await?;
-        htreq::delete(&self.0.log, &mut conn, &url, &self.0.headers, 100).await?;
+        let mut conn = htreq::connect(limits, &url).await?;
+        htreq::delete(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?;
         return Ok(());
     }
 
@@ -87,7 +90,7 @@ impl Client {
     pub async fn user_get<
         T: AsRef<str>,
         I: AsRef<[T]>,
-    >(&self, user: impl AsRef<str>, path: I, max_size: usize) -> Result<Option<serde_json::Value>, Error> {
+    >(&self, limits: htreq::Limits, user: impl AsRef<str>, path: I) -> Result<Option<serde_json::Value>, Error> {
         let url =
             self.build_path(
                 Iterator::chain(
@@ -95,15 +98,15 @@ impl Client {
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
             );
-        let mut conn = htreq::connect(&url).await?;
-        return Ok(htreq::get_json(&self.0.log, &mut conn, &url, &self.0.headers, max_size).await?);
+        let mut conn = htreq::connect(limits, &url).await?;
+        return Ok(htreq::get_json(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?);
     }
 
     /// Helper for setting under a user path.
     pub async fn user_set<
         T: AsRef<str>,
         I: AsRef<[T]>,
-    >(&self, user: impl AsRef<str>, path: I, data: serde_json::Value) -> Result<(), Error> {
+    >(&self, limits: htreq::Limits, user: impl AsRef<str>, path: I, data: serde_json::Value) -> Result<(), Error> {
         let url =
             self.build_path(
                 Iterator::chain(
@@ -111,8 +114,8 @@ impl Client {
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
             );
-        let mut conn = htreq::connect(&url).await?;
-        htreq::post_json::<()>(&self.0.log, &mut conn, &url, &self.0.headers, data, 100).await?;
+        let mut conn = htreq::connect(limits, &url).await?;
+        htreq::post_json::<()>(&self.0.log, limits, &mut conn, &url, &self.0.headers, data).await?;
         return Ok(());
     }
 
@@ -120,7 +123,7 @@ impl Client {
     pub async fn user_delete<
         T: AsRef<str>,
         I: AsRef<[T]>,
-    >(&self, user: impl AsRef<str>, path: I) -> Result<(), Error> {
+    >(&self, limits: htreq::Limits, user: impl AsRef<str>, path: I) -> Result<(), Error> {
         let url =
             self.build_path(
                 Iterator::chain(
@@ -128,8 +131,8 @@ impl Client {
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
             );
-        let mut conn = htreq::connect(&url).await?;
-        htreq::delete(&self.0.log, &mut conn, &url, &self.0.headers, 100).await?;
+        let mut conn = htreq::connect(limits, &url).await?;
+        htreq::delete(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?;
         return Ok(());
     }
 }
