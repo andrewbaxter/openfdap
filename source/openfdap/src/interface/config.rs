@@ -58,6 +58,8 @@ pub struct Config {
     pub bind_addr: String,
     /// Directory in which to store database, will be created if it doesn't exist
     pub data_dir: PathBuf,
-    /// Mapping of application IDs to pairs of
+    /// Mapping of application tokens to access - for setting up tokens for
+    /// applications to access FDAP. This can also be done (identically) via the
+    /// `fdap_user` root key in the FDAP tree.
     pub users: HashMap<String, Vec<AccessPair>>,
 }

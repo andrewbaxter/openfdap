@@ -155,7 +155,31 @@ impl htserve::handler::Handler<Body> for State {
                     return Ok(response_401());
                 },
             };
-            let Some(grants) = self.users.get(&token) else {
+            let grants = shed!{
+                'grants _;
+                if let Some(grants) = self.users.get(&token) {
+                    break 'grants Cow::Borrowed(grants);
+                };
+                shed!{
+                    let db = self.database.read().unwrap();
+                    let Some(fdap_users) = get(&*db, &self.etags, &vec![format!("fdap_user")]) else {
+                        break;
+                    };
+                    let mut fdap_users =
+                        match serde_json::from_value::<HashMap<String, Access>>(fdap_users.0.clone()) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                log.log_err(
+                                    loga::WARN,
+                                    e.context("`fdap_user` key in database has invalid format"),
+                                );
+                                break;
+                            },
+                        };
+                    if let Some(grants) = fdap_users.remove(&token) {
+                        break 'grants Cow::Owned(grants);
+                    }
+                }
                 log.log(loga::DEBUG, "No user in config for token");
                 return Ok(response_401());
             };

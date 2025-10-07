@@ -42,6 +42,12 @@ There's two things:
 
   [Documentation](./source/fdap/readme.md)
 
+# How can I use this today?
+
+- [`fdap-login`](https://github.com/andrewbaxter/fdap-login/) - This is a minimal identity provider reads users from FDAP. It currently supports 3-leg OIDC.
+
+- [`sunwet`](https://github.com/andrewbaxter/sunwet/) - This is an experimental knowledge-graph-based personal-knowledge and file server which can be configured to read config and users from FDAP.
+
 # Standard ontology
 
 - `"user"` - record, each key corresponds to a user ID
@@ -49,3 +55,9 @@ There's two things:
   - `USER_ID`
 
     - `"name"` - The user's name in its canonical representation
+
+# OpenFDAP ontology
+
+- `"fdap_user"` - record, each key is an FDAP token
+
+  This is merged with the identical field in the openfdap config, allowing you to configure new applications while running.

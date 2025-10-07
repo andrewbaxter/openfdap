@@ -44,6 +44,8 @@ It requires a configuration file like:
 
   Each rule is a pair, with the first element being a path made up of `string` and `wildcard` segments that's matched against the path of a request, and the second element being the allowed actions at that path.
 
+  You can also add application entries to an identical `fdap_user` tree at the root of the database, to manage fdap access dynamically. Config-defined access has priority over database-defined access.
+
 # Setting the config
 
 Make sure you create a root/admin user in the config above.
