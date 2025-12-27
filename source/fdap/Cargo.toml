@@ -13,3 +13,6 @@ htwrap = "0.14"
 loga = "0.5"
 serde_json = "1"
 urlencoding = "2"
+
+[lints.clippy]
+all = "allow"

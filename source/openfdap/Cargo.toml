@@ -36,3 +36,6 @@ urlencoding = "2"
 htwrap = { version = "0.14" }
 flowcontrol = "0.2"
 schemars = "0.8"
+
+[lints.clippy]
+all = "allow"
