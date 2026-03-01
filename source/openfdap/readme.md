@@ -1,8 +1,8 @@
-This is a reference implementation suitable for small (single-server) deploys.
+This is a fully functional and minimal FDAP server.
 
 At the moment it stores the config as a single file on disk updated with atomic writes.
 
-This also means that requests do not need to be paused to maintain consistency when taking backups.
+You can back it up live without worrying about consistency.
 
 # Installation + setup
 
@@ -48,9 +48,23 @@ It requires a configuration file like:
 
 # Setting the config
 
-Make sure you create a root/admin user in the config above.
+Your config can have any format, but see the top readme for standard fields.
 
-This is optional, but you can create a JSON-Schema file `fdap.schema.json` your FDAP data like:
+Create your config file, `fdap.json`.
+
+Commit it with `curl -X POST https://my-fdap-server/ --header 'Authorization: Bearer ROOT_TOKEN' --data @fdap.json`.
+
+Note that this will replace all data at `/`. If you have different processes managing FDAP steate you'll need to do more piecewise updates to individual subpaths.
+
+# OpenFDAP ontology
+
+- `"fdap_user"` - record, each key is an FDAP token (optional)
+
+  This is merged with the identical field in the openfdap config, allowing you to configure new applications while running.
+
+# Avoiding data errors
+
+Applications may provide JSON schema for their FDAP configs. You can combine them into a single schema like:
 
 ```json
 {
@@ -83,7 +97,9 @@ This is optional, but you can create a JSON-Schema file `fdap.schema.json` your 
 }
 ```
 
-Then edit your FDAP data file `fdap.json` with:
+Save it as `fdap.schema.json`.
+
+If you modify your config like:
 
 ```json
 {
@@ -92,6 +108,4 @@ Then edit your FDAP data file `fdap.json` with:
 }
 ```
 
-And commit it with `curl -X POST https://my-fdap-server/ --header 'Authorization: Bearer ROOT_TOKEN' --data @fdap.json`.
-
-Note that this will replace all data at `/`. If applications are writing directly to `FDAP` you'll need to do more piecewise updates to individual subpaths.
+editors (VS Code) will show you config errors while you edit.
