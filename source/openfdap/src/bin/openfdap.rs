@@ -132,6 +132,24 @@ enum Database<'a> {
 }
 
 pub type Access = BTreeMap<AccessPath, AccessAction>;
+
+fn find_grant(grants: &Access, path: &AccessPath) -> Option<AccessAction> {
+    return grants
+        .iter()
+        .filter(|(rule, _)| {
+            rule.len() <= path.len() && Iterator::zip(rule.iter(), path.iter()).all(|(want, have)| match want {
+                AccessPathSeg::Wildcard => true,
+                AccessPathSeg::String(want) => {
+                    let AccessPathSeg::String(have) = have else {
+                        panic!();
+                    };
+                    want == have
+                },
+            })
+        })
+        .max_by(|(a, _), (b, _)| (a.len(), *a).cmp(&(b.len(), *b)))
+        .map(|(_, actions)| *actions);
+}
 pub type DataPath = Vec<String>;
 
 struct State {
@@ -201,33 +219,7 @@ impl htserve::handler::Handler<Body> for State {
                 "Checking path against grants",
                 ea!(path = path.dbg_str(), grants = grants.dbg_str()),
             );
-            let grants_actions;
-            shed!{
-                'found _;
-                for(prefix, grants) in grants.range::< AccessPath,
-                (
-                    Bound <& AccessPath >,
-                    Bound <& AccessPath >
-                ) >((Bound::Unbounded, Bound::Included(&access_path))).rev() {
-                    if !Iterator::zip(
-                        prefix.iter(),
-                        access_path.iter(),
-                    ).all(|(want_seg, have_seg)| match want_seg {
-                        AccessPathSeg::Wildcard => {
-                            return true;
-                        },
-                        AccessPathSeg::String(want_seg) => {
-                            let AccessPathSeg::String(have_seg) = have_seg else {
-                                panic!();
-                            };
-                            return want_seg == have_seg;
-                        },
-                    }) {
-                        break;
-                    };
-                    grants_actions = *grants;
-                    break 'found;
-                }
+            let Some(grants_actions) = find_grant(&grants, &access_path) else {
                 log.log_with(loga::DEBUG, "Found no actions granted at path", ea!(path = path.dbg_str()));
                 return Ok(response_401());
             };
@@ -586,5 +578,70 @@ async fn main() {
         Err(e) => {
             loga::fatal(e);
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{
+            find_grant,
+            Access,
+        },
+        openfdap::interface::config::{
+            AccessAction,
+            AccessPathSeg,
+        },
+    };
+
+    fn path(segs: &[&str]) -> Vec<AccessPathSeg> {
+        return segs.iter().map(|s| match *s {
+            "*" => AccessPathSeg::Wildcard,
+            s => AccessPathSeg::String(s.to_string()),
+        }).collect();
+    }
+
+    const READ: AccessAction = AccessAction {
+        read: true,
+        write: false,
+    };
+    const WRITE: AccessAction = AccessAction {
+        read: true,
+        write: true,
+    };
+
+    fn grants(rules: &[(&[&str], AccessAction)]) -> Access {
+        return rules.iter().map(|(p, a)| (path(p), *a)).collect();
+    }
+
+    fn found(g: &Access, p: &[&str]) -> Option<(bool, bool)> {
+        return find_grant(g, &path(p)).map(|a| (a.read, a.write));
+    }
+
+    #[test]
+    fn rule_longer_than_request_does_not_match() {
+        let g = grants(&[(&["user", "*", "kwa"], READ)]);
+        assert_eq!(found(&g, &["user", "a"]), None);
+        assert_eq!(found(&g, &["user"]), None);
+        assert_eq!(found(&g, &[]), None);
+        assert_eq!(found(&g, &["user", "a", "kwa"]), Some((true, false)));
+        assert_eq!(found(&g, &["user", "a", "kwa", "x"]), Some((true, false)));
+        assert_eq!(found(&g, &["user", "a", "fdap-login"]), None);
+    }
+
+    #[test]
+    fn sibling_wildcard_rules_all_considered() {
+        let g = grants(&[(&["user", "*", "fdap-login"], READ), (&["user", "*", "kwa"], READ)]);
+        assert_eq!(found(&g, &["user", "test", "fdap-login"]), Some((true, false)));
+        assert_eq!(found(&g, &["user", "test", "kwa"]), Some((true, false)));
+        assert_eq!(found(&g, &["user", "test", "other"]), None);
+    }
+
+    #[test]
+    fn most_specific_rule_wins() {
+        let g = grants(&[(&[], READ), (&["user", "*", "app"], WRITE), (&["user", "admin", "app"], READ)]);
+        assert_eq!(found(&g, &["anything"]), Some((true, false)));
+        assert_eq!(found(&g, &["user", "a", "app"]), Some((true, true)));
+        assert_eq!(found(&g, &["user", "admin", "app"]), Some((true, false)));
     }
 }
