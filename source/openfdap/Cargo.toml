@@ -22,7 +22,7 @@ taskmanager = { version = "0.6" }
 hyper = { version = "1", features = ["server", "http1"] }
 http-body-util = "0.1"
 http-body = "1"
-aargvark = { version = "0.6", features = ["serde_json", "serde_yaml"] }
+aargvark = { version = "0.13", features = ["serde_json", "serde_yaml"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 hyper-rustls = "0.27"
 rustls = "0.23"
@@ -31,11 +31,11 @@ http = "1"
 tempfile = "3"
 tokio-stream = { version = "0.1", features = ["net"] }
 zbase32 = "0.1"
-sha2 = { version = "0.10" }
+sha2 = { version = "0.11" }
 urlencoding = "2"
-htwrap = { version = "0.15" }
+htwrap = { version = "0.17" }
 flowcontrol = "0.2"
-schemars = "0.8"
+schemars = "1.2"
 
 [lints.clippy]
 all = "allow"
