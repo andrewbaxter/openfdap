@@ -8,41 +8,46 @@ You can back it up live without worrying about consistency.
 
 Install it with: `cargo build`
 
+Run it with `openfdap serve --config CONFIG_FILE`, or with the config JSON in the `OPENFDAP_CONFIG` environment variable. `openfdap serve --config CONFIG_FILE --validate` checks the config and exits.
+
 It requires a configuration file like:
 
 ```json
 {
   "bind_addr": "127.0.0.1:17778",
-  "data_dir": "/var/fdap/database.json",
-  "users": {
-    "ROOT_TOKEN": [[[], { "read": true, "write": true }]],
-    "APP1_TOKEN": [
-      [
-        [{ "string": "user" }, "wildcard", { "string": "email" }],
+  "data_dir": "/var/fdap",
+  "max_write_bytes": 1048576,
+  "users": [
+    {
+      "token": {"sha256":"c8aa3b22a00d9c859e71e2c6d30f0fe036987300aa5f6e71466f1dce2585a3ef"},
+      "access": [{ "path": [], "action": { "read": true, "write": true } }]
+    },
+    {
+      "token": {"sha256":"2234e2ef41a94876a75efb62873059331c71df03c162058ec3b63f130bea99e1"},
+      "access": [
         {
-          "read": true,
-          "write": false
-        }
-      ],
-      [
-        [{ "string": "user" }, "wildcard", { "string": "app1_data" }],
+          "path": [{ "string": "user" }, "wildcard", { "string": "email" }],
+          "action": { "read": true, "write": false }
+        },
         {
-          "read": true,
-          "write": true
+          "path": [{ "string": "user" }, "wildcard", { "string": "app1_data" }],
+          "action": { "read": true, "write": true }
         }
       ]
-    ]
-  }
+    }
+  ]
 }
 ```
 
-- `bind_addr` is the address the server listens on
+- `bind_addr` is the address the server listens on.
 
-- `data_dir` is the dir in which the config is stored, and can/should be backed up
+- `data_dir` is the directory in which the database (`db.json`) is stored, and can/should be backed up.
 
-- `users` is a mapping of application tokens to application access rules.
+- `users` is a list of applications, each with a `token` and `access` rules.
 
-  Each rule is a pair, with the first element being a path made up of `string` and `wildcard` segments that's matched against the path of a request, and the second element being the allowed actions at that path.
+  `token` is `{ "sha256": "HEX" }`; generate it with `echo -n MY_TOKEN | openfdap hash-token`.
+
+  Each rule has a `path` made up of `string` and `wildcard` segments that's matched against the path of a request, and an `action` with the allowed actions at that path. When several rules match, the longest (most specific) wins, and among equal-length rules a literal segment beats a wildcard.
 
   You can also add application entries to an identical `fdap_user` tree at the root of the database, to manage fdap access dynamically. Config-defined access has priority over database-defined access.
 
@@ -54,13 +59,13 @@ Create your config file, `fdap.json`.
 
 Commit it with `curl -X POST https://my-fdap-server/ --header 'Authorization: Bearer ROOT_TOKEN' --data @fdap.json`.
 
-Note that this will replace all data at `/`. If you have different processes managing FDAP steate you'll need to do more piecewise updates to individual subpaths.
+Note that this will replace all data at `/`. If you have different processes managing FDAP state you'll need to do more piecewise updates to individual subpaths.
 
 # OpenFDAP ontology
 
-- `"fdap_user"` - record, each key is an FDAP token (optional)
+- `"fdap_user"` - list of applications, same format as the `users` field in the openfdap config (optional)
 
-  This is merged with the identical field in the openfdap config, allowing you to configure new applications while running.
+  This is merged with the config `users`, allowing you to configure new applications while running. Entries with invalid token hashes are logged and ignored.
 
 # Avoiding data errors
 

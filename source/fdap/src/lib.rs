@@ -52,12 +52,13 @@ impl Client {
             if i > 0 {
                 subpath.push_str("/");
             }
-            subpath.push_str(seg.as_ref());
+            subpath.push_str(&encode_segment(seg.as_ref()));
         }
         return self.0.base_url.join(subpath);
     }
 
-    /// Replace all data under `path`.
+    /// Get the data at `path`. Returns `Ok(None)` if the stored value is JSON
+    /// `null`; a missing path is an error.
     pub async fn get<
         T: AsRef<str>,
         I: AsRef<[T]>,
@@ -134,6 +135,17 @@ impl Client {
         let mut conn = htreq::connect(limits, &url).await?;
         htreq::delete(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?;
         return Ok(());
+    }
+}
+
+/// Percent-encode a single path segment so that keys containing `/`, `?`, `%`,
+/// `#` etc. round-trip through the URL, and so that user-supplied segments like
+/// `..` can't be resolved as relative path navigation.
+fn encode_segment(seg: &str) -> String {
+    match seg {
+        "." => return "%2E".to_string(),
+        ".." => return "%2E%2E".to_string(),
+        _ => return urlencoding::encode(seg).into_owned(),
     }
 }
 
@@ -220,5 +232,20 @@ impl ClientBuilder {
                 .into_iter()
                 .collect(),
         })));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_segment;
+
+    #[test]
+    fn segments_are_encoded() {
+        assert_eq!(encode_segment("alice"), "alice");
+        assert_eq!(encode_segment("a/b"), "a%2Fb");
+        assert_eq!(encode_segment("a?b#c"), "a%3Fb%23c");
+        assert_eq!(encode_segment("100%"), "100%25");
+        assert_eq!(encode_segment(".."), "%2E%2E");
+        assert_eq!(encode_segment("."), "%2E");
     }
 }

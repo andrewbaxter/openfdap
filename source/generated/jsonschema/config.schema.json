@@ -4,21 +4,25 @@
   "type": "object",
   "properties": {
     "bind_addr": {
-      "description": "Address to serve on, like `0.0.0.0:64116`",
+      "description": "Address to serve on, like `0.0.0.0:64116`.",
       "type": "string"
     },
     "data_dir": {
       "description": "Directory in which to store database, will be created if it doesn't exist",
       "type": "string"
     },
+    "max_write_bytes": {
+      "description": "Maximum size in bytes of a `POST` request body. Defaults to 1 MiB.",
+      "type": "integer",
+      "format": "uint",
+      "default": 1048576,
+      "minimum": 0
+    },
     "users": {
-      "description": "Mapping of application tokens to access - for setting up tokens for\napplications to access FDAP. This can also be done (identically) via the\n`fdap_user` root key in the FDAP tree.",
-      "type": "object",
-      "additionalProperties": {
-        "type": "array",
-        "items": {
-          "$ref": "#/$defs/AccessPair"
-        }
+      "description": "Application tokens and their access - for setting up tokens for\napplications to access FDAP. This can also be done (identically) via the\n`fdap_user` root key in the FDAP tree.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/User"
       }
     }
   },
@@ -84,6 +88,43 @@
             "string"
           ]
         }
+      ]
+    },
+    "Token": {
+      "description": "How an application token is stored in the config. Only hashes are accepted,\nso that the config file, the database and their backups never contain\nusable tokens.",
+      "oneOf": [
+        {
+          "description": "Hex-encoded SHA-256 hash of the token. Generate with `openfdap hash-token`.",
+          "type": "object",
+          "properties": {
+            "sha256": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "sha256"
+          ]
+        }
+      ]
+    },
+    "User": {
+      "type": "object",
+      "properties": {
+        "access": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessPair"
+          }
+        },
+        "token": {
+          "$ref": "#/$defs/Token"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "access"
       ]
     }
   }

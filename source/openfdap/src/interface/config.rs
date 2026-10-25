@@ -6,7 +6,6 @@ use {
     },
     std::{
         cmp::Ordering,
-        collections::HashMap,
         path::PathBuf,
     },
 };
@@ -51,15 +50,43 @@ pub struct AccessPair {
     pub action: AccessAction,
 }
 
+pub const DEFAULT_MAX_WRITE_BYTES: usize = 1024 * 1024;
+
+fn default_max_write_bytes() -> usize {
+    return DEFAULT_MAX_WRITE_BYTES;
+}
+
+/// How an application token is stored in the config. Only hashes are accepted,
+/// so that the config file, the database and their backups never contain
+/// usable tokens.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Token {
+    /// Hex-encoded SHA-256 hash of the token. Generate with `openfdap hash-token`.
+    Sha256(String),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct User {
+    pub token: Token,
+    pub access: Vec<AccessPair>,
+}
+
+pub type Users = Vec<User>;
+
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Config {
-    /// Address to serve on, like `0.0.0.0:64116`
+    /// Address to serve on, like `0.0.0.0:64116`.
     pub bind_addr: String,
     /// Directory in which to store database, will be created if it doesn't exist
     pub data_dir: PathBuf,
-    /// Mapping of application tokens to access - for setting up tokens for
+    /// Application tokens and their access - for setting up tokens for
     /// applications to access FDAP. This can also be done (identically) via the
     /// `fdap_user` root key in the FDAP tree.
-    pub users: HashMap<String, Vec<AccessPair>>,
+    pub users: Users,
+    /// Maximum size in bytes of a `POST` request body. Defaults to 1 MiB.
+    #[serde(default = "default_max_write_bytes")]
+    pub max_write_bytes: usize,
 }

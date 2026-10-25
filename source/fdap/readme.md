@@ -6,5 +6,8 @@ Use it with:
 
 ```rust
 let fdap_client = fdap::Client::builder().build()?;
-let email = fdap_client.user_get("stephanie", ["email"]).await?;
+let limits = htwrap::htreq::Limits::default();
+let email = fdap_client.user_get(limits, "stephanie", ["email"]).await?;
 ```
+
+The base URL and token are read from the `FDAP_BASE_URL` and `FDAP_TOKEN` environment variables unless set explicitly on the builder.

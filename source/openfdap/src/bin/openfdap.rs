@@ -16,17 +16,23 @@ use {
         },
         Response,
     },
-    http_body_util::BodyExt,
+    http_body_util::{
+        BodyExt,
+        LengthLimitError,
+        Limited,
+    },
     htwrap::htserve::{
         self,
         auth::get_auth_token,
         handler::async_trait::async_trait,
         responses::{
+            body_empty,
             body_full,
             body_json,
             response_200_json,
             response_400,
             response_401,
+            response_403,
             response_404,
             response_503,
             Body,
@@ -45,11 +51,14 @@ use {
         AccessPath,
         AccessPathSeg,
         Config,
+        Token,
+        Users,
     },
     serde::{
         Deserialize,
         Serialize,
     },
+    sha2::Digest,
     std::{
         borrow::Cow,
         collections::{
@@ -58,6 +67,7 @@ use {
         },
         io::{
             ErrorKind,
+            Read,
             Write,
         },
         ops::Bound,
@@ -80,13 +90,24 @@ use {
 };
 
 #[derive(Aargvark)]
-struct Args {
-    /// Configuration JSON file
+struct ServeArgs {
+    /// Configuration JSON file. If not specified, the config is read from the
+    /// `OPENFDAP_CONFIG` environment variable.
     config: Option<AargvarkJson<Config>>,
     /// Check the config then exit
     validate: Option<()>,
     /// Enable debug logging
     debug: Option<()>,
+}
+
+#[derive(Aargvark)]
+#[vark(break_help)]
+enum Args {
+    /// Run the server
+    Serve(ServeArgs),
+    /// Read a token from stdin and print a hashed `token` entry for use in the
+    /// config
+    HashToken,
 }
 
 pub mod dball {
@@ -110,6 +131,9 @@ pub mod dbv1 {
     }
 }
 
+/// Root key in the database holding dynamically-configured users.
+const DB_USERS_KEY: &str = "fdap_user";
+
 fn format_etag(ver: DbVersion) -> String {
     return format!("\"{}\"", ver);
 }
@@ -123,6 +147,17 @@ fn response_200_json_etag(v: impl Serialize, etag: String) -> Response<Body> {
         .unwrap();
 }
 
+fn response_405() -> Response<Body> {
+    return Response::builder().status(405).body(body_empty()).unwrap();
+}
+
+fn response_413(max: usize) -> Response<Body> {
+    return Response::builder()
+        .status(413)
+        .body(body_full(format!("Request body exceeds the configured maximum of {} bytes", max).into_bytes()))
+        .unwrap();
+}
+
 pub use dbv1 as latest;
 
 #[derive(Serialize, Deserialize)]
@@ -133,6 +168,64 @@ enum Database<'a> {
 
 pub type Access = BTreeMap<AccessPath, AccessAction>;
 
+/// Token lookup key: the SHA-256 hash of the token. Tokens are never stored in
+/// memory in plaintext after startup.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TokenHash([u8; 32]);
+
+impl TokenHash {
+    fn of(token: &str) -> Self {
+        return Self(sha2::Sha256::digest(token.as_bytes()).into());
+    }
+
+    fn to_hex(&self) -> String {
+        let mut out = String::with_capacity(64);
+        for b in self.0 {
+            out.push_str(&format!("{:02x}", b));
+        }
+        return out;
+    }
+
+    fn from_hex(hex: &str) -> Result<Self, loga::Error> {
+        let hex = hex.trim();
+        if hex.len() != 64 {
+            return Err(loga::err_with("SHA-256 hex must be exactly 64 characters", ea!(len = hex.len())));
+        }
+        let mut out = [0u8; 32];
+        for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+            out[i] =
+                u8::from_str_radix(
+                    std::str::from_utf8(chunk).context("Invalid utf-8 in hex")?,
+                    16,
+                ).context_with("Invalid hex digit in SHA-256", ea!(offset = i * 2))?;
+        }
+        return Ok(Self(out));
+    }
+}
+
+impl TryFrom<&Token> for TokenHash {
+    type Error = loga::Error;
+
+    fn try_from(t: &Token) -> Result<Self, loga::Error> {
+        match t {
+            Token::Sha256(hex) => return Self::from_hex(hex),
+        }
+    }
+}
+
+fn build_users(users: Users) -> Result<HashMap<TokenHash, Access>, loga::Error> {
+    let mut out = HashMap::new();
+    for (i, u) in users.into_iter().enumerate() {
+        let hash =
+            TokenHash::try_from(&u.token).context_with("Invalid token in users entry", ea!(index = i))?;
+        if out.insert(hash, u.access.into_iter().map(|p| (p.path, p.action)).collect()).is_some() {
+            return Err(loga::err_with("Duplicate token in users", ea!(index = i)));
+        }
+    }
+    return Ok(out);
+}
+
+/// Find the most specific grant matching `path`.
 fn find_grant(grants: &Access, path: &AccessPath) -> Option<AccessAction> {
     return grants
         .iter()
@@ -141,7 +234,8 @@ fn find_grant(grants: &Access, path: &AccessPath) -> Option<AccessAction> {
                 AccessPathSeg::Wildcard => true,
                 AccessPathSeg::String(want) => {
                     let AccessPathSeg::String(have) = have else {
-                        panic!();
+                        // Request paths are built from concrete segments only
+                        unreachable!("request paths never contain wildcards");
                     };
                     want == have
                 },
@@ -150,13 +244,15 @@ fn find_grant(grants: &Access, path: &AccessPath) -> Option<AccessAction> {
         .max_by(|(a, _), (b, _)| (a.len(), *a).cmp(&(b.len(), *b)))
         .map(|(_, actions)| *actions);
 }
+
 pub type DataPath = Vec<String>;
 
 struct State {
     log: Log,
     db_path: PathBuf,
-    database: RwLock<latest::Database>,
-    users: HashMap<String, Access>,
+    database: tokio::sync::RwLock<latest::Database>,
+    users: HashMap<TokenHash, Access>,
+    max_write_bytes: usize,
     etags: RwLock<BTreeMap<DataPath, DbVersion>>,
 }
 
@@ -173,28 +269,39 @@ impl htserve::handler::Handler<Body> for State {
                     return Ok(response_401());
                 },
             };
+            let token_hash = TokenHash::of(&token);
+            drop(token);
             let grants = shed!{
                 'grants _;
-                if let Some(grants) = self.users.get(&token) {
+                if let Some(grants) = self.users.get(&token_hash) {
                     break 'grants Cow::Borrowed(grants);
                 };
                 shed!{
-                    let db = self.database.read().unwrap();
-                    let Some(fdap_users) = get(&*db, &self.etags, &vec![format!("fdap_user")]) else {
+                    let db = self.database.read().await;
+                    let Some(fdap_users) = get(&*db, &self.etags, &vec![DB_USERS_KEY.to_string()]) else {
                         break;
                     };
-                    let mut fdap_users =
-                        match serde_json::from_value::<HashMap<String, Access>>(fdap_users.0.clone()) {
-                            Ok(f) => f,
-                            Err(e) => {
-                                log.log_err(
-                                    loga::WARN,
-                                    e.context("`fdap_user` key in database has invalid format"),
-                                );
-                                break;
-                            },
-                        };
-                    if let Some(grants) = fdap_users.remove(&token) {
+                    let fdap_users = match serde_json::from_value::<Users>(fdap_users.0.clone()) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            log.log_err(
+                                loga::WARN,
+                                e.context(&format!("`{}` key in database has invalid format", DB_USERS_KEY)),
+                            );
+                            break;
+                        },
+                    };
+                    let mut fdap_users = match build_users(fdap_users) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            log.log_err(
+                                loga::WARN,
+                                e.context(&format!("`{}` key in database has invalid tokens", DB_USERS_KEY)),
+                            );
+                            break;
+                        },
+                    };
+                    if let Some(grants) = fdap_users.remove(&token_hash) {
                         break 'grants Cow::Owned(grants);
                     }
                 }
@@ -208,8 +315,12 @@ impl htserve::handler::Handler<Body> for State {
                 // nop
             } else {
                 for seg in subpath.split("/") {
-                    let seg =
-                        urlencoding::decode(&seg).context_with("Path segment can't be urldecoded", ea!(seg = seg))?;
+                    let seg = match urlencoding::decode(&seg) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Ok(response_400(format!("Path segment {:?} can't be urldecoded: {}", seg, e)));
+                        },
+                    };
                     path.push(seg.to_string());
                     access_path.push(AccessPathSeg::String(seg.to_string()));
                 }
@@ -221,7 +332,7 @@ impl htserve::handler::Handler<Body> for State {
             );
             let Some(grants_actions) = find_grant(&grants, &access_path) else {
                 log.log_with(loga::DEBUG, "Found no actions granted at path", ea!(path = path.dbg_str()));
-                return Ok(response_401());
+                return Ok(response_403());
             };
             log.log_with(
                 loga::DEBUG,
@@ -231,7 +342,7 @@ impl htserve::handler::Handler<Body> for State {
             match args.head.method {
                 Method::HEAD | Method::GET => {
                     if !grants_actions.read {
-                        return Ok(response_401());
+                        return Ok(response_403());
                     }
                     shed!{
                         let Some(if_ver) = args.head.headers.get(IF_NONE_MATCH) else {
@@ -247,7 +358,7 @@ impl htserve::handler::Handler<Body> for State {
                         }
                         return Ok(Response::builder().status(304).body(body_full(vec![])).unwrap());
                     }
-                    let db = self.database.read().unwrap();
+                    let db = self.database.read().await;
                     if let Some((data, ver)) = get(&db, &self.etags, &path) {
                         let etag = format_etag(ver);
                         if args.head.method == Method::HEAD {
@@ -261,15 +372,24 @@ impl htserve::handler::Handler<Body> for State {
                 },
                 Method::POST => {
                     if !grants_actions.write {
-                        return Ok(response_401());
+                        return Ok(response_403());
                     }
-                    let data =
-                        serde_json::from_slice::<serde_json::Value>(
-                            args.body.collect().await.context("Error reading request body")?.to_bytes().as_ref(),
-                        ).context("Got invalid json in POST")?;
-
-                    // # Sync code
-                    let mut db_ref = self.database.write().unwrap();
+                    let body = match Limited::new(args.body, self.max_write_bytes).collect().await {
+                        Ok(b) => b.to_bytes(),
+                        Err(e) => {
+                            if e.downcast_ref::<LengthLimitError>().is_some() {
+                                return Ok(response_413(self.max_write_bytes));
+                            }
+                            return Err(loga::err(format!("Error reading request body: {}", e)));
+                        },
+                    };
+                    let data = match serde_json::from_slice::<serde_json::Value>(body.as_ref()) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return Ok(response_400(format!("Invalid JSON in request body: {}", e)));
+                        },
+                    };
+                    let mut db_ref = self.database.write().await;
                     let mut db = db_ref.clone();
                     db.version += 1;
                     let mut at = &mut db.data;
@@ -279,7 +399,7 @@ impl htserve::handler::Handler<Body> for State {
                                 serde_json::Value::Null => {
                                     *at = serde_json::Value::Object(serde_json::Map::new());
                                     let serde_json::Value::Object(map) = at else {
-                                        panic!();
+                                        unreachable!();
                                     };
                                     at = map.entry(seg).or_insert_with(|| serde_json::Value::Null);
                                 },
@@ -301,37 +421,30 @@ impl htserve::handler::Handler<Body> for State {
                         }
                     }
                     *at = data;
-                    atomic_write(
-                        &self.db_path,
-                        Database::V1(Cow::Borrowed(&db)),
-                    ).context("Failed to write database changes")?;
+                    let db = write_db(&self.db_path, db).await.context("Failed to write database changes")?;
                     wipe_etags(self, &path, Some(db.version));
                     *db_ref = db;
                     return Ok(response_200_json(()));
                 },
                 Method::DELETE => {
                     if !grants_actions.write {
-                        return Ok(response_401());
+                        return Ok(response_403());
                     }
-
-                    // # Sync code
-                    let mut db_ref = self.database.write().unwrap();
+                    let mut db_ref = self.database.write().await;
                     let mut db = db_ref.clone();
                     db.version += 1;
-                    match path.pop() {
+                    let mut parent_path = path.clone();
+                    match parent_path.pop() {
                         Some(last_seg) => {
                             let mut at = &mut db.data;
-                            for (i, seg) in path.iter().enumerate() {
+                            for (i, seg) in parent_path.iter().enumerate() {
                                 match at {
                                     serde_json::Value::Object(map) => {
                                         at = match map.get_mut(seg) {
                                             Some(e) => e,
                                             None => {
-                                                return Ok(
-                                                    response_400(
-                                                        format!("Data at path segment {:?} is missing", &path[..=i]),
-                                                    ),
-                                                );
+                                                // Nothing to delete; idempotent success without a write
+                                                return Ok(response_200_json(()));
                                             },
                                         };
                                     },
@@ -340,7 +453,7 @@ impl htserve::handler::Handler<Body> for State {
                                             response_400(
                                                 format!(
                                                     "Data at path segment {:?} is a {}, not an object",
-                                                    &path[..=i],
+                                                    &parent_path[..=i],
                                                     json_type(at)
                                                 ),
                                             ),
@@ -350,14 +463,17 @@ impl htserve::handler::Handler<Body> for State {
                             }
                             match at {
                                 serde_json::Value::Object(map) => {
-                                    map.remove(&last_seg);
+                                    if map.remove(&last_seg).is_none() {
+                                        // Nothing to delete; idempotent success without a write
+                                        return Ok(response_200_json(()));
+                                    }
                                 },
                                 _ => {
                                     return Ok(
                                         response_400(
                                             format!(
                                                 "Data at path segment {:?} is a {}, not an object",
-                                                path,
+                                                parent_path,
                                                 json_type(at)
                                             ),
                                         ),
@@ -369,16 +485,13 @@ impl htserve::handler::Handler<Body> for State {
                             db.data = serde_json::Value::Null;
                         },
                     }
-                    atomic_write(
-                        &self.db_path,
-                        Database::V1(Cow::Borrowed(&db)),
-                    ).context("Failed to write database changes")?;
+                    let db = write_db(&self.db_path, db).await.context("Failed to write database changes")?;
                     wipe_etags(self, &path, None);
                     *db_ref = db;
                     return Ok(response_200_json(()));
                 },
                 _ => {
-                    return Ok(response_401());
+                    return Ok(response_405());
                 },
             }
         }.await {
@@ -457,17 +570,32 @@ fn json_type(v: &serde_json::Value) -> &str {
     };
 }
 
-fn atomic_write(path: &Path, data: impl Serialize) -> Result<(), loga::Error> {
-    let mut temp =
-        NamedTempFile::new_in(path.parent().unwrap()).context("Error creating temp file for atomic write")?;
-    temp
-        .write_all(serde_json::to_string(&data).unwrap().as_bytes())
-        .context_with("Error writing temp file", ea!(path = temp.path().display()))?;
+/// Write the file via a temp file + rename, with fsync so a completed request
+/// survives power loss. Blocking; call via `write_db`.
+fn atomic_write(path: &Path, data: &[u8]) -> Result<(), loga::Error> {
+    let dir = path.parent().unwrap();
+    let mut temp = NamedTempFile::new_in(dir).context("Error creating temp file for atomic write")?;
+    temp.write_all(data).context_with("Error writing temp file", ea!(path = temp.path().display()))?;
+    temp.as_file().sync_all().context_with("Error syncing temp file", ea!(path = temp.path().display()))?;
     temp.persist(path).context_with("Error atomically replacing file", ea!(path = path.display()))?;
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .context_with("Error syncing data dir after rename", ea!(path = dir.display()))?;
     return Ok(());
 }
 
-async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Error> {
+/// Serialize and write the database on a blocking thread so disk I/O doesn't
+/// stall the async workers. Returns the database so the caller can install it.
+async fn write_db(path: &Path, db: latest::Database) -> Result<latest::Database, loga::Error> {
+    let path = path.to_path_buf();
+    return tokio::task::spawn_blocking(move || {
+        let bytes = serde_json::to_vec(&Database::V1(Cow::Borrowed(&db))).unwrap();
+        atomic_write(&path, &bytes)?;
+        return Ok(db) as Result<_, loga::Error>;
+    }).await.context("Database write task panicked")?;
+}
+
+async fn inner(log: &Log, tm: &TaskManager, args: ServeArgs) -> Result<(), loga::Error> {
     // Get config (fallback to env, for use in ex: docker)
     let config = if let Some(p) = args.config {
         p.value
@@ -492,7 +620,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
     let db_path = config.data_dir.join("db.json");
     let state = Arc::new(State {
         log: log.clone(),
-        database: RwLock::new(match std::fs::read(&db_path) {
+        database: tokio::sync::RwLock::new(match std::fs::read(&db_path) {
             Ok(db) => {
                 match serde_json::from_slice::<Database>(&db).context("Error parsing database")? {
                     Database::V1(db) => db.into_owned(),
@@ -509,11 +637,8 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
             },
         }),
         db_path: db_path,
-        users: config
-            .users
-            .into_iter()
-            .map(|(k, v)| (k, v.into_iter().map(|p| (p.path, p.action)).collect()))
-            .collect(),
+        users: build_users(config.users).context("Invalid `users` in config")?,
+        max_write_bytes: config.max_write_bytes,
         etags: Default::default(),
     });
 
@@ -559,7 +684,21 @@ async fn inner(log: &Log, tm: &TaskManager, args: Args) -> Result<(), loga::Erro
 
 #[tokio::main]
 async fn main() {
-    let args = aargvark::vark::<Args>();
+    let args = match aargvark::vark::<Args>() {
+        Args::HashToken => {
+            let mut token = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut token) {
+                loga::fatal(loga::err(format!("Error reading token from stdin: {}", e)));
+            }
+            let token = token.trim_end_matches(['\r', '\n']);
+            if token.is_empty() {
+                loga::fatal(loga::err("Token read from stdin is empty"));
+            }
+            println!("{}", serde_json::to_string(&Token::Sha256(TokenHash::of(token).to_hex())).unwrap());
+            return;
+        },
+        Args::Serve(args) => args,
+    };
     if args.validate.is_some() {
         return;
     }
@@ -585,12 +724,18 @@ async fn main() {
 mod tests {
     use {
         super::{
+            build_users,
             find_grant,
             Access,
+            TokenHash,
         },
         openfdap::interface::config::{
             AccessAction,
+            AccessPair,
             AccessPathSeg,
+            Token,
+            User,
+            Users,
         },
     };
 
@@ -643,5 +788,47 @@ mod tests {
         assert_eq!(found(&g, &["anything"]), Some((true, false)));
         assert_eq!(found(&g, &["user", "a", "app"]), Some((true, true)));
         assert_eq!(found(&g, &["user", "admin", "app"]), Some((true, false)));
+    }
+
+    #[test]
+    fn hashed_and_raw_tokens_match() {
+        let raw = "secret-token";
+        let hash = TokenHash::of(raw);
+        assert_eq!(TokenHash::from_hex(&hash.to_hex()).unwrap(), hash);
+        assert_eq!(TokenHash::from_hex(&hash.to_hex().to_uppercase()).unwrap(), hash);
+        assert_eq!(TokenHash::try_from(&Token::Sha256(hash.to_hex())).unwrap(), hash);
+        assert!(TokenHash::from_hex("abc").is_err());
+        assert!(TokenHash::from_hex(&"zz".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn build_users_rejects_bad_and_duplicate_tokens() {
+        let user = |t: Token| User {
+            token: t,
+            access: vec![AccessPair {
+                path: vec![],
+                action: READ,
+            }],
+        };
+        assert!(build_users(vec![user(Token::Sha256("nothex".to_string()))]).is_err());
+        let hex = TokenHash::of("tok").to_hex();
+        assert!(build_users(vec![user(Token::Sha256(hex.clone())), user(Token::Sha256(hex.to_uppercase()))]).is_err());
+        assert!(build_users(vec![user(Token::Sha256(hex))]).is_ok());
+    }
+
+    #[test]
+    fn db_users_json_shape_matches_config() {
+        // The `fdap_user` tree must round-trip through JSON in the same shape as the
+        // config `users` field.
+        let json = serde_json::json!([
+            {
+                "token": {"sha256": TokenHash::of("TOKEN").to_hex()},
+                "access": [{"path": [{"string": "user"}, "wildcard"], "action": {"read": true, "write": false}}],
+            },
+        ]);
+        let users: Users = serde_json::from_value(json).unwrap();
+        let built = build_users(users).unwrap();
+        let g = built.get(&TokenHash::of("TOKEN")).unwrap();
+        assert_eq!(find_grant(g, &path(&["user", "a"])).map(|a| a.read), Some(true));
     }
 }
