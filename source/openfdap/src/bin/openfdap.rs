@@ -664,16 +664,7 @@ async fn inner(log: &Log, tm: &TaskManager, args: ServeArgs) -> Result<(), loga:
                             return Ok(());
                         },
                     };
-                    tokio::task::spawn({
-                        async move {
-                            match htserve::handler::root_handle_http(&log, state, stream).await {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    log.log_err(loga::DEBUG, e.context("Error serving connection"));
-                                },
-                            }
-                        }
-                    });
+                    htserve::handler::root_handle_http(&log, Default::default(), state, stream);
                     return Ok(());
                 }
             }

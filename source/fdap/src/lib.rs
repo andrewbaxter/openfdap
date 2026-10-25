@@ -1,6 +1,6 @@
 use {
     http::{
-        header::AUTHORIZATION,
+        HeaderMap,
         Uri,
     },
     htwrap::{
@@ -9,7 +9,6 @@ use {
     },
     loga::Log,
     std::{
-        collections::HashMap,
         env,
         sync::Arc,
     },
@@ -26,6 +25,12 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error { }
 
+impl From<htreq::Error> for Error {
+    fn from(value: htreq::Error) -> Self {
+        return Self(value.to_string());
+    }
+}
+
 impl From<loga::Error> for Error {
     fn from(value: loga::Error) -> Self {
         return Self(value.to_string());
@@ -35,7 +40,7 @@ impl From<loga::Error> for Error {
 struct Client_ {
     log: Log,
     base_url: Uri,
-    headers: HashMap<String, String>,
+    headers: HeaderMap,
 }
 
 #[derive(Clone)]
@@ -46,7 +51,7 @@ impl Client {
         return ClientBuilder::default();
     }
 
-    fn build_path<'a>(&self, path: impl Iterator<Item = &'a dyn AsRef<str>>) -> Uri {
+    fn build_path<'a>(&self, path: impl Iterator<Item = &'a dyn AsRef<str>>) -> Result<Uri, Error> {
         let mut subpath = String::new();
         for (i, seg) in path.enumerate() {
             if i > 0 {
@@ -54,7 +59,7 @@ impl Client {
             }
             subpath.push_str(&encode_segment(seg.as_ref()));
         }
-        return self.0.base_url.join(subpath);
+        return self.0.base_url.join(subpath).map_err(|e| Error(format!("Error building request url: {}", e)));
     }
 
     /// Get the data at `path`. Returns `Ok(None)` if the stored value is JSON
@@ -63,7 +68,7 @@ impl Client {
         T: AsRef<str>,
         I: AsRef<[T]>,
     >(&self, limits: htreq::Limits, path: I) -> Result<Option<serde_json::Value>, Error> {
-        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>))?;
         let mut conn = htreq::connect(limits, &url).await?;
         return Ok(htreq::get_json(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?);
     }
@@ -73,7 +78,7 @@ impl Client {
         T: AsRef<str>,
         I: AsRef<[T]>,
     >(&self, limits: htreq::Limits, path: I, data: serde_json::Value) -> Result<(), Error> {
-        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>))?;
         let mut conn = htreq::connect(limits, &url).await?;
         htreq::post_json::<()>(&self.0.log, limits, &mut conn, &url, &self.0.headers, data).await?;
         return Ok(());
@@ -81,7 +86,7 @@ impl Client {
 
     /// Delete all data under `path`.
     pub async fn delete<T: AsRef<str>, I: AsRef<[T]>>(&self, limits: htreq::Limits, path: I) -> Result<(), Error> {
-        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>));
+        let url = self.build_path(path.as_ref().iter().map(|x| x as &dyn AsRef<str>))?;
         let mut conn = htreq::connect(limits, &url).await?;
         htreq::delete(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?;
         return Ok(());
@@ -98,7 +103,7 @@ impl Client {
                     [&"user" as &dyn AsRef<str>, &user].into_iter(),
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
-            );
+            )?;
         let mut conn = htreq::connect(limits, &url).await?;
         return Ok(htreq::get_json(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?);
     }
@@ -114,7 +119,7 @@ impl Client {
                     [&"user" as &dyn AsRef<str>, &user].into_iter(),
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
-            );
+            )?;
         let mut conn = htreq::connect(limits, &url).await?;
         htreq::post_json::<()>(&self.0.log, limits, &mut conn, &url, &self.0.headers, data).await?;
         return Ok(());
@@ -131,7 +136,7 @@ impl Client {
                     [&"user" as &dyn AsRef<str>, &user].into_iter(),
                     path.as_ref().iter().map(|x| x as &dyn AsRef<str>),
                 ),
-            );
+            )?;
         let mut conn = htreq::connect(limits, &url).await?;
         htreq::delete(&self.0.log, limits, &mut conn, &url, &self.0.headers).await?;
         return Ok(());
@@ -228,9 +233,7 @@ impl ClientBuilder {
         return Ok(Client(Arc::new(Client_ {
             log: log,
             base_url: base_url,
-            headers: [(AUTHORIZATION.to_string(), format!("{}{}", htwrap::constants::HEADER_BEARER_PREFIX, token))]
-                .into_iter()
-                .collect(),
+            headers: htreq::auth_token_headers(&token),
         })));
     }
 }

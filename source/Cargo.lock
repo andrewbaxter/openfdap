@@ -882,9 +882,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "htwrap"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "228c97294f6b8e5c0a17ad42793291cac82d3a96ba37628abe2b34520fea3e1d"
+checksum = "7b011dc6ceb0e06697d1c05b58383a5a472feca64163d57d4589df4384258407"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -896,19 +896,17 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
- "hyper-rustls",
  "hyper-util",
  "loga",
  "rand",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
  "tokio-rustls",
- "tokio-stream",
  "tokio-util",
- "tower-service",
 ]
 
 [[package]]
