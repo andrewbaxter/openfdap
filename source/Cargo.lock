@@ -548,7 +548,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fdap"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "http",
  "htwrap",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "openfdap"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aargvark",
  "chrono",
