@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "A POST body larger than `max_write_bytes` is rejected",
+      "setup": {"tokens": ["root"], "openfdap": {"max_write_bytes": 10}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "root", "raw_body": "12345678901"},
+          "expect": {"status": 413, "db": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "root", "raw_body": "1234567890"},
+          "expect": {"status": 200, "body": null, "db": {"a": 1234567890}}
+        }
+      ]
+    }
+  ]
+}

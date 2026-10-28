@@ -64,6 +64,7 @@ use {
         collections::{
             BTreeMap,
             HashMap,
+            HashSet,
         },
         io::{
             ErrorKind,
@@ -225,6 +226,37 @@ fn build_users(users: Users) -> Result<HashMap<TokenHash, Access>, loga::Error> 
     return Ok(out);
 }
 
+/// Like `build_users` but for the `fdap_user` tree, which can't be rejected up
+/// front: invalid entries are logged and skipped, and a token appearing in
+/// multiple entries is ambiguous so all of its entries are skipped.
+fn build_db_users(log: &Log, users: Users) -> HashMap<TokenHash, Access> {
+    let mut out = HashMap::new();
+    let mut duplicates = HashSet::new();
+    for (i, u) in users.into_iter().enumerate() {
+        let hash = match TokenHash::try_from(&u.token) {
+            Ok(h) => h,
+            Err(e) => {
+                log.log_err(
+                    loga::WARN,
+                    e.context_with(&format!("Ignoring `{}` entry with invalid token", DB_USERS_KEY), ea!(index = i)),
+                );
+                continue;
+            },
+        };
+        if duplicates.contains(&hash) ||
+            out.insert(hash, u.access.into_iter().map(|p| (p.path, p.action)).collect::<Access>()).is_some() {
+            log.log_with(
+                loga::WARN,
+                format!("Ignoring all `{}` entries with a token used by multiple entries", DB_USERS_KEY),
+                ea!(index = i),
+            );
+            out.remove(&hash);
+            duplicates.insert(hash);
+        }
+    }
+    return out;
+}
+
 /// Find the most specific grant matching `path`.
 fn find_grant(grants: &Access, path: &AccessPath) -> Option<AccessAction> {
     return grants
@@ -291,16 +323,7 @@ impl htserve::handler::Handler<Body> for State {
                             break;
                         },
                     };
-                    let mut fdap_users = match build_users(fdap_users) {
-                        Ok(u) => u,
-                        Err(e) => {
-                            log.log_err(
-                                loga::WARN,
-                                e.context(&format!("`{}` key in database has invalid tokens", DB_USERS_KEY)),
-                            );
-                            break;
-                        },
-                    };
+                    let mut fdap_users = build_db_users(&log, fdap_users);
                     if let Some(grants) = fdap_users.remove(&token_hash) {
                         break 'grants Cow::Owned(grants);
                     }
@@ -439,6 +462,10 @@ impl htserve::handler::Handler<Body> for State {
                             let mut at = &mut db.data;
                             for (i, seg) in parent_path.iter().enumerate() {
                                 match at {
+                                    serde_json::Value::Null => {
+                                        // Nothing to delete; idempotent success without a write
+                                        return Ok(response_200_json(()));
+                                    },
                                     serde_json::Value::Object(map) => {
                                         at = match map.get_mut(seg) {
                                             Some(e) => e,
@@ -462,6 +489,10 @@ impl htserve::handler::Handler<Body> for State {
                                 }
                             }
                             match at {
+                                serde_json::Value::Null => {
+                                    // Nothing to delete; idempotent success without a write
+                                    return Ok(response_200_json(()));
+                                },
                                 serde_json::Value::Object(map) => {
                                     if map.remove(&last_seg).is_none() {
                                         // Nothing to delete; idempotent success without a write

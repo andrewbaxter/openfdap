@@ -1,0 +1,54 @@
+{
+  "$schema": "../source/generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "GET of the root of an empty database returns null",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {"request": {"method": "GET", "path": [], "token": "root"}, "expect": {"status": 200, "body": null}}
+      ]
+    },
+    {
+      "description": "GET returns the JSON subtree at the path",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": {"c": 1}, "d": "x"}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": [], "token": "root"},
+          "expect": {"status": 200, "body": {"a": {"b": {"c": 1}, "d": "x"}}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": {"b": {"c": 1}, "d": "x"}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a", "b", "c"], "token": "root"},
+          "expect": {"status": 200, "body": 1}
+        },
+        {
+          "request": {"method": "GET", "path": ["a", "d"], "token": "root"},
+          "expect": {"status": 200, "body": "x"}
+        }
+      ]
+    },
+    {
+      "description": "GET of a path that doesn't exist returns 404",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": 1}}},
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "root"}, "expect": {"status": 404}},
+        {"request": {"method": "GET", "path": ["a", "x"], "token": "root"}, "expect": {"status": 404}},
+        {"request": {"method": "GET", "path": ["a", "b", "c"], "token": "root"}, "expect": {"status": 404}}
+      ]
+    },
+    {
+      "description": "A stored null is distinct from a missing path",
+      "setup": {"tokens": ["root"], "db": {"a": null}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": null}
+        },
+        {"request": {"method": "GET", "path": ["b"], "token": "root"}, "expect": {"status": 404}}
+      ]
+    }
+  ]
+}

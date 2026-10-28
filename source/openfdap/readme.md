@@ -65,7 +65,7 @@ Note that this will replace all data at `/`. If you have different processes man
 
 - `"fdap_user"` - list of applications, same format as the `users` field in the openfdap config (optional)
 
-  This is merged with the config `users`, allowing you to configure new applications while running. Entries with invalid token hashes are logged and ignored.
+  This is merged with the config `users`, allowing you to configure new applications while running. Entries with invalid token hashes, and all entries sharing a token, are logged and ignored.
 
 # Avoiding data errors
 

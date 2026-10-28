@@ -1,0 +1,79 @@
+{
+  "$schema": "../source/generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "DELETE removes the subtree at the path",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": 1, "c": 2}}},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": ["a", "b"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": {"a": {"c": 2}}}
+        },
+        {"request": {"method": "GET", "path": ["a", "b"], "token": "root"}, "expect": {"status": 404}}
+      ]
+    },
+    {
+      "description": "DELETE of a path that doesn't exist succeeds without changes",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": 1}}},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": ["a", "x"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": {"a": {"b": 1}}}
+        },
+        {
+          "request": {"method": "DELETE", "path": ["x", "y"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": {"a": {"b": 1}}}
+        }
+      ]
+    },
+    {
+      "description": "DELETE in an empty database succeeds without changes",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": null}
+        },
+        {
+          "request": {"method": "DELETE", "path": ["a", "b"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": null}
+        },
+        {
+          "request": {"method": "DELETE", "path": [], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": null}
+        }
+      ]
+    },
+    {
+      "description": "DELETE below a null succeeds without changes",
+      "setup": {"tokens": ["root"], "db": {"a": null}},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": ["a", "b"], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": {"a": null}}
+        }
+      ]
+    },
+    {
+      "description": "DELETE at the root empties the database",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": [], "token": "root"},
+          "expect": {"status": 200, "body": null, "db": null}
+        },
+        {"request": {"method": "GET", "path": [], "token": "root"}, "expect": {"status": 200, "body": null}}
+      ]
+    },
+    {
+      "description": "DELETE through a value that isn't an object is rejected",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "DELETE", "path": ["a", "b"], "token": "root"},
+          "expect": {"status": 400, "db": {"a": 1}}
+        }
+      ]
+    }
+  ]
+}

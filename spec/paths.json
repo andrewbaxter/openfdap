@@ -1,0 +1,53 @@
+{
+  "$schema": "../source/generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "Path segments are percent-decoded, so keys may contain any character",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a/b"], "token": "root", "body": 1},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["q?x#y"], "token": "root", "body": 2},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["100%"], "token": "root", "body": 3},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["ü 🙂"], "token": "root", "body": 4},
+          "expect": {"status": 200, "body": null, "db": {"a/b": 1, "q?x#y": 2, "100%": 3, "ü 🙂": 4}}
+        },
+        {
+          "request": {"method": "GET", "path": "/a%2Fb", "token": "root"},
+          "expect": {"status": 200, "body": 1}
+        },
+        {
+          "request": {"method": "GET", "path": "/%C3%BC%20%F0%9F%99%82", "token": "root"},
+          "expect": {"status": 200, "body": 4}
+        }
+      ]
+    },
+    {
+      "description": "`.` and `..` segments are literal keys, not relative navigation",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["..", "x"], "token": "root", "body": 1},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["."], "token": "root", "body": 2},
+          "expect": {"status": 200, "body": null, "db": {"..": {"x": 1}, ".": 2}}
+        },
+        {
+          "request": {"method": "GET", "path": ["..", "x"], "token": "root"},
+          "expect": {"status": 200, "body": 1}
+        }
+      ]
+    }
+  ]
+}

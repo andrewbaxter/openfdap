@@ -1,0 +1,96 @@
+{
+  "$schema": "../../../generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "GET returns an ETag and honors If-None-Match",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": 1, "capture": {"e": "etag"}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root", "headers": {"if-none-match": "{{e}}"}},
+          "expect": {"status": 304}
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": ["a"],
+            "token": "root",
+            "headers": {"if-none-match": "\"other\""}
+          },
+          "expect": {"status": 200, "body": 1, "headers": {"etag": "{{e}}"}}
+        }
+      ]
+    },
+    {
+      "description": "A write changes the ETag of the path, its ancestors and its descendants",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": {"c": 1}}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": [], "token": "root"},
+          "expect": {"status": 200, "capture": {"root": "etag"}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "capture": {"a": "etag"}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a", "b", "c"], "token": "root"},
+          "expect": {"status": 200, "capture": {"c": "etag"}}
+        },
+        {
+          "request": {"method": "POST", "path": ["a", "b"], "token": "root", "body": {"c": 2}},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "GET", "path": [], "token": "root", "headers": {"if-none-match": "{{root}}"}},
+          "expect": {"status": 200, "headers": {"etag": {"not_equals": "{{root}}"}}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root", "headers": {"if-none-match": "{{a}}"}},
+          "expect": {"status": 200, "headers": {"etag": {"not_equals": "{{a}}"}}}
+        },
+        {
+          "request": {
+            "method": "GET",
+            "path": ["a", "b", "c"],
+            "token": "root",
+            "headers": {"if-none-match": "{{c}}"}
+          },
+          "expect": {"status": 200, "body": 2, "headers": {"etag": {"not_equals": "{{c}}"}}}
+        }
+      ]
+    },
+    {
+      "description": "A DELETE changes the ETag of the path's ancestors",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": 1}}},
+      "steps": [
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "capture": {"a": "etag"}}
+        },
+        {
+          "request": {"method": "DELETE", "path": ["a", "b"], "token": "root"},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root", "headers": {"if-none-match": "{{a}}"}},
+          "expect": {"status": 200, "body": {}, "headers": {"etag": {"not_equals": "{{a}}"}}}
+        }
+      ]
+    },
+    {
+      "description": "HEAD returns the ETag without a body",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "HEAD", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "raw_body": "", "headers": {"etag": {"present": true}}}
+        },
+        {"request": {"method": "HEAD", "path": ["missing"], "token": "root"}, "expect": {"status": 404}}
+      ]
+    }
+  ]
+}

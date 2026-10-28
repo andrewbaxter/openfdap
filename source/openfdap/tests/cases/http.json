@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "Unsupported methods are rejected",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {
+          "request": {"method": "PUT", "path": ["a"], "token": "root", "body": 1},
+          "expect": {"status": 405, "db": null}
+        },
+        {"request": {"method": "PUT", "path": ["a"], "body": 1}, "expect": {"status": 401, "db": null}}
+      ]
+    },
+    {
+      "description": "A trailing `/` is ignored",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {"request": {"method": "GET", "path": "/a/", "token": "root"}, "expect": {"status": 200, "body": 1}},
+        {
+          "request": {"method": "GET", "path": "/", "token": "root"},
+          "expect": {"status": 200, "body": {"a": 1}}
+        }
+      ]
+    },
+    {
+      "description": "A path segment that doesn't decode to UTF-8 is rejected",
+      "setup": {"tokens": ["root"]},
+      "steps": [{"request": {"method": "GET", "path": "/%FF", "token": "root"}, "expect": {"status": 400}}]
+    }
+  ]
+}

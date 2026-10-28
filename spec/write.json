@@ -1,0 +1,87 @@
+{
+  "$schema": "../source/generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "POST replaces the subtree at the path",
+      "setup": {"tokens": ["root"], "db": {"a": {"b": 1, "c": 2}, "z": 0}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "root", "body": {"d": 3}},
+          "expect": {"status": 200, "body": null, "db": {"a": {"d": 3}, "z": 0}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": {"d": 3}}
+        }
+      ]
+    },
+    {
+      "description": "POST creates missing parent objects",
+      "setup": {"tokens": ["root"]},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a", "b", "c"], "token": "root", "body": 1},
+          "expect": {"status": 200, "body": null, "db": {"a": {"b": {"c": 1}}}}
+        }
+      ]
+    },
+    {
+      "description": "POST through a null creates an object in its place",
+      "setup": {"tokens": ["root"], "db": {"a": null}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a", "b"], "token": "root", "body": true},
+          "expect": {"status": 200, "body": null, "db": {"a": {"b": true}}}
+        }
+      ]
+    },
+    {
+      "description": "POST at the root replaces the whole database",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": [], "token": "root", "body": {"b": 2}},
+          "expect": {"status": 200, "body": null, "db": {"b": 2}}
+        }
+      ]
+    },
+    {
+      "description": "POST can store null",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "root", "body": null},
+          "expect": {"status": 200, "body": null, "db": {"a": null}}
+        },
+        {
+          "request": {"method": "GET", "path": ["a"], "token": "root"},
+          "expect": {"status": 200, "body": null}
+        }
+      ]
+    },
+    {
+      "description": "POST through a value that isn't an object or null is rejected",
+      "setup": {"tokens": ["root"], "db": {"a": 1, "s": "x"}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a", "b"], "token": "root", "body": 1},
+          "expect": {"status": 400, "db": {"a": 1, "s": "x"}}
+        },
+        {
+          "request": {"method": "POST", "path": ["s", "b", "c"], "token": "root", "body": 1},
+          "expect": {"status": 400, "db": {"a": 1, "s": "x"}}
+        }
+      ]
+    },
+    {
+      "description": "POST with a body that isn't JSON is rejected",
+      "setup": {"tokens": ["root"], "db": {"a": 1}},
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "root", "raw_body": "{not json"},
+          "expect": {"status": 400, "db": {"a": 1}}
+        }
+      ]
+    }
+  ]
+}

@@ -13,3 +13,5 @@ jobs:
       - run: rustup component add clippy
       - run: SCCACHE_GHA_ENABLED=true RUSTC_WRAPPER=sccache cargo clippy --workspace
         working-directory: ./source
+      - run: SCCACHE_GHA_ENABLED=true RUSTC_WRAPPER=sccache cargo test --workspace
+        working-directory: ./source

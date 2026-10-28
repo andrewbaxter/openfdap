@@ -1,0 +1,262 @@
+{
+  "$schema": "../../../generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "A rule matches the path it names and everything below it, but not above or beside it",
+      "setup": {
+        "tokens": ["root"],
+        "db": {"user": {"a": {"kwa": {"x": 1}, "fdap-login": 2, "other": 3}}},
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {
+                  "path": [{"string": "user"}, "wildcard", {"string": "kwa"}],
+                  "action": {"read": true, "write": false}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": [], "token": "app"}, "expect": {"status": 403}},
+        {"request": {"method": "GET", "path": ["user"], "token": "app"}, "expect": {"status": 403}},
+        {"request": {"method": "GET", "path": ["user", "a"], "token": "app"}, "expect": {"status": 403}},
+        {
+          "request": {"method": "GET", "path": ["user", "a", "kwa"], "token": "app"},
+          "expect": {"status": 200, "body": {"x": 1}}
+        },
+        {
+          "request": {"method": "GET", "path": ["user", "a", "kwa", "x"], "token": "app"},
+          "expect": {"status": 200, "body": 1}
+        },
+        {
+          "request": {"method": "GET", "path": ["user", "a", "other"], "token": "app"},
+          "expect": {"status": 403}
+        }
+      ]
+    },
+    {
+      "description": "All matching rules are considered, not just the first",
+      "setup": {
+        "tokens": ["root"],
+        "db": {"user": {"a": {"kwa": {"x": 1}, "fdap-login": 2, "other": 3}}},
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {
+                  "path": [{"string": "user"}, "wildcard", {"string": "fdap-login"}],
+                  "action": {"read": true, "write": false}
+                },
+                {
+                  "path": [{"string": "user"}, "wildcard", {"string": "kwa"}],
+                  "action": {"read": true, "write": false}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "request": {"method": "GET", "path": ["user", "a", "fdap-login"], "token": "app"},
+          "expect": {"status": 200, "body": 2}
+        },
+        {
+          "request": {"method": "GET", "path": ["user", "a", "kwa"], "token": "app"},
+          "expect": {"status": 200, "body": {"x": 1}}
+        },
+        {
+          "request": {"method": "GET", "path": ["user", "a", "other"], "token": "app"},
+          "expect": {"status": 403}
+        }
+      ]
+    },
+    {
+      "description": "The longest matching rule wins",
+      "setup": {
+        "tokens": ["root"],
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {"path": [], "action": {"read": true, "write": false}},
+                {
+                  "path": [{"string": "user"}, "wildcard", {"string": "app"}],
+                  "action": {"read": true, "write": true}
+                },
+                {
+                  "path": [{"string": "user"}, {"string": "admin"}, {"string": "app"}],
+                  "action": {"read": true, "write": false}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["anything"], "token": "app", "body": 1},
+          "expect": {"status": 403}
+        },
+        {
+          "request": {"method": "POST", "path": ["user", "a", "app"], "token": "app", "body": 1},
+          "expect": {"status": 200, "body": null}
+        },
+        {
+          "request": {"method": "POST", "path": ["user", "admin", "app"], "token": "app", "body": 1},
+          "expect": {"status": 403, "db": {"user": {"a": {"app": 1}}}}
+        }
+      ]
+    },
+    {
+      "description": "Among equal-length matching rules, segments are compared from the left and a literal beats a wildcard",
+      "setup": {
+        "tokens": ["root"],
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {
+                  "path": [{"string": "user"}, "wildcard", {"string": "x"}],
+                  "action": {"read": true, "write": false}
+                },
+                {
+                  "path": ["wildcard", {"string": "admin"}, {"string": "x"}],
+                  "action": {"read": true, "write": true}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "request": {"method": "POST", "path": ["user", "admin", "x"], "token": "app", "body": 1},
+          "expect": {"status": 403, "db": null}
+        },
+        {
+          "request": {"method": "GET", "path": ["user", "admin", "x"], "token": "app"},
+          "expect": {"status": 404}
+        }
+      ]
+    },
+    {
+      "description": "A read-only rule doesn't allow writes",
+      "setup": {
+        "tokens": ["root"],
+        "db": {"a": 1},
+        "openfdap": {
+          "users": [{"token": "app", "access": [{"path": [], "action": {"read": true, "write": false}}]}]
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["a"], "token": "app"}, "expect": {"status": 200, "body": 1}},
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "app", "body": 2},
+          "expect": {"status": 403, "db": {"a": 1}}
+        },
+        {
+          "request": {"method": "DELETE", "path": ["a"], "token": "app"},
+          "expect": {"status": 403, "db": {"a": 1}}
+        }
+      ]
+    },
+    {
+      "description": "A write-only rule doesn't allow reads",
+      "setup": {
+        "tokens": ["root"],
+        "db": {"a": 1},
+        "openfdap": {
+          "users": [{"token": "app", "access": [{"path": [], "action": {"read": false, "write": true}}]}]
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["a"], "token": "app"}, "expect": {"status": 403}},
+        {
+          "request": {"method": "POST", "path": ["a"], "token": "app", "body": 2},
+          "expect": {"status": 200, "body": null, "db": {"a": 2}}
+        }
+      ]
+    },
+    {
+      "description": "Access is checked before existence, so a missing path doesn't reveal anything",
+      "setup": {
+        "tokens": ["root"],
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [{"path": [{"string": "public"}], "action": {"read": true, "write": false}}]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["secret"], "token": "app"}, "expect": {"status": 403}},
+        {
+          "request": {"method": "GET", "path": ["public", "missing"], "token": "app"},
+          "expect": {"status": 404}
+        }
+      ]
+    },
+    {
+      "description": "An encoded `/` is part of the segment, not a separator, when matching rules",
+      "setup": {
+        "tokens": ["root"],
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {"path": [{"string": "user"}, {"string": "alice"}], "action": {"read": true, "write": true}}
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/user/alice%2Fbob", "token": "app", "body": 1},
+          "expect": {"status": 403, "db": null}
+        },
+        {
+          "request": {"method": "POST", "path": "/user/alice/bob", "token": "app", "body": 1},
+          "expect": {"status": 200, "body": null, "db": {"user": {"alice": {"bob": 1}}}}
+        }
+      ]
+    },
+    {
+      "description": "A `..` segment can't be used to escape a rule",
+      "setup": {
+        "tokens": ["root"],
+        "openfdap": {
+          "users": [
+            {
+              "token": "app",
+              "access": [
+                {"path": [{"string": "user"}, {"string": "alice"}], "action": {"read": true, "write": true}}
+              ]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "request": {"method": "POST", "path": "/user/alice/../bob", "token": "app", "body": 1},
+          "expect": {"status": 200, "body": null, "db": {"user": {"alice": {"..": {"bob": 1}}}}}
+        },
+        {
+          "request": {"method": "POST", "path": "/user/bob/../alice", "token": "app", "body": 1},
+          "expect": {"status": 403, "db": {"user": {"alice": {"..": {"bob": 1}}}}}
+        }
+      ]
+    }
+  ]
+}

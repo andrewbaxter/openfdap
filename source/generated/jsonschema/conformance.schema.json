@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CaseFile",
+  "description": "A file of test cases.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Case"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "cases"
+  ],
+  "$defs": {
+    "AccessAction": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "write"
+      ]
+    },
+    "AccessPair": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/AccessAction"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessPathSeg"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "action"
+      ]
+    },
+    "AccessPathSeg": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "wildcard"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "string": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "string"
+          ]
+        }
+      ]
+    },
+    "Case": {
+      "description": "A single test case. Each case starts a fresh server with `setup`, then runs\n`steps` in order against it.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "setup": {
+          "$ref": "#/$defs/Setup",
+          "default": {
+            "db": null,
+            "tokens": []
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "steps"
+      ]
+    },
+    "Expect": {
+      "description": "Expected response. Only the fields present are checked.",
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "The response body parsed as JSON must equal this."
+        },
+        "capture": {
+          "description": "Save response header values into variables: `{\"VARIABLE\": \"HEADER\"}`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "db": {
+          "description": "The full database contents after the request."
+        },
+        "headers": {
+          "description": "Header names are case-insensitive.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/HeaderExpect"
+          }
+        },
+        "raw_body": {
+          "description": "The response body must be exactly this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ]
+    },
+    "HeaderExpect": {
+      "anyOf": [
+        {
+          "description": "The header must have exactly this value. May reference captured variables\nas `{{name}}`.",
+          "type": "string"
+        },
+        {
+          "description": "The header must be absent or have a different value. May reference captured\nvariables as `{{name}}`.",
+          "$ref": "#/$defs/HeaderNotEquals"
+        },
+        {
+          "description": "The header must be present (`true`) or absent (`false`).",
+          "$ref": "#/$defs/HeaderPresent"
+        }
+      ]
+    },
+    "HeaderNotEquals": {
+      "type": "object",
+      "properties": {
+        "not_equals": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "not_equals"
+      ]
+    },
+    "HeaderPresent": {
+      "type": "object",
+      "properties": {
+        "present": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "present"
+      ]
+    },
+    "OpenfdapSetup": {
+      "type": "object",
+      "properties": {
+        "max_write_bytes": {
+          "description": "Maximum `POST` body size.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "users": {
+          "description": "Additional applications in the config, with access rules.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SetupUser"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Request": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "JSON request body (`null` is sent as the JSON text `null`)."
+        },
+        "headers": {
+          "description": "Extra headers. Values may reference captured variables as `{{name}}`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "method": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/RequestPath"
+        },
+        "raw_body": {
+          "description": "Request body sent verbatim, for bodies that aren't valid JSON.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "description": "Sent as `Authorization: Bearer TOKEN`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path"
+      ]
+    },
+    "RequestPath": {
+      "anyOf": [
+        {
+          "description": "Data path segments. Each segment is percent-encoded by the runner (every\nbyte other than ASCII alphanumerics and `-._~`, plus `.` and `..` as whole\nsegments) and joined with `/`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "description": "The literal path of the request URL, sent as-is.",
+          "type": "string"
+        }
+      ]
+    },
+    "Setup": {
+      "type": "object",
+      "properties": {
+        "db": {
+          "description": "Initial contents of the database. Defaults to `null` (empty).",
+          "default": null
+        },
+        "openfdap": {
+          "description": "Settings for cases testing `openfdap`-specific behavior, not part of the\nFDAP spec.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenfdapSetup"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens": {
+          "description": "Tokens with read and write access to the whole tree.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "SetupUser": {
+      "description": "Like a config `users` entry, but with the plain token rather than its hash.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccessPair"
+          }
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "access"
+      ]
+    },
+    "Step": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expect": {
+          "$ref": "#/$defs/Expect"
+        },
+        "request": {
+          "$ref": "#/$defs/Request"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "expect"
+      ]
+    }
+  }
+}

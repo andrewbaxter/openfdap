@@ -1,0 +1,138 @@
+{
+  "$schema": "../../../generated/jsonschema/conformance.schema.json",
+  "cases": [
+    {
+      "description": "Applications in the `fdap_user` tree can authenticate",
+      "setup": {
+        "tokens": ["root"],
+        "db": {
+          "fdap_user": [
+            {
+              "token": {"sha256": "d17b771fc7fa8a5ed0e7ba39d18ed0e853599c3390f588765fb6cfe15e619009"},
+              "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+            }
+          ],
+          "x": 1,
+          "y": 2
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 200, "body": 1}},
+        {"request": {"method": "GET", "path": ["y"], "token": "dyn"}, "expect": {"status": 403}},
+        {"request": {"method": "POST", "path": ["x"], "token": "dyn", "body": 2}, "expect": {"status": 403}}
+      ]
+    },
+    {
+      "description": "Applications can be added and removed at runtime via `fdap_user`",
+      "setup": {"tokens": ["root"], "db": {"x": 1}},
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 401}},
+        {
+          "request": {
+            "method": "POST",
+            "path": ["fdap_user"],
+            "token": "root",
+            "body": [
+              {
+                "token": {"sha256": "d17b771fc7fa8a5ed0e7ba39d18ed0e853599c3390f588765fb6cfe15e619009"},
+                "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+              }
+            ]
+          },
+          "expect": {"status": 200, "body": null}
+        },
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 200, "body": 1}},
+        {
+          "request": {"method": "DELETE", "path": ["fdap_user"], "token": "root"},
+          "expect": {"status": 200, "body": null}
+        },
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 401}}
+      ]
+    },
+    {
+      "description": "Config applications take priority over `fdap_user` applications with the same token",
+      "setup": {
+        "tokens": ["root"],
+        "db": {
+          "fdap_user": [
+            {
+              "token": {"sha256": "d17b771fc7fa8a5ed0e7ba39d18ed0e853599c3390f588765fb6cfe15e619009"},
+              "access": [{"path": [], "action": {"read": true, "write": true}}]
+            }
+          ],
+          "x": 1
+        },
+        "openfdap": {
+          "users": [
+            {
+              "token": "dyn",
+              "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+            }
+          ]
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 200, "body": 1}},
+        {"request": {"method": "POST", "path": ["x"], "token": "dyn", "body": 2}, "expect": {"status": 403}}
+      ]
+    },
+    {
+      "description": "`fdap_user` entries with invalid token hashes are ignored individually",
+      "setup": {
+        "tokens": ["root"],
+        "db": {
+          "fdap_user": [
+            {"token": {"sha256": "nothex"}, "access": []},
+            {
+              "token": {"sha256": "d17b771fc7fa8a5ed0e7ba39d18ed0e853599c3390f588765fb6cfe15e619009"},
+              "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+            }
+          ],
+          "x": 1
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 200, "body": 1}}
+      ]
+    },
+    {
+      "description": "`fdap_user` entries sharing a token are all ignored, without affecting other entries",
+      "setup": {
+        "tokens": ["root"],
+        "db": {
+          "fdap_user": [
+            {
+              "token": {"sha256": "9eb6203435cb3e0033f544e3bf6f1b74b138c765fc489a38a092e8f7adbd9638"},
+              "access": [{"path": [], "action": {"read": true, "write": true}}]
+            },
+            {
+              "token": {"sha256": "d17b771fc7fa8a5ed0e7ba39d18ed0e853599c3390f588765fb6cfe15e619009"},
+              "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+            },
+            {
+              "token": {"sha256": "9eb6203435cb3e0033f544e3bf6f1b74b138c765fc489a38a092e8f7adbd9638"},
+              "access": [{"path": [{"string": "x"}], "action": {"read": true, "write": false}}]
+            },
+            {
+              "token": {"sha256": "9eb6203435cb3e0033f544e3bf6f1b74b138c765fc489a38a092e8f7adbd9638"},
+              "access": [{"path": [{"string": "y"}], "action": {"read": true, "write": false}}]
+            }
+          ],
+          "x": 1
+        }
+      },
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dup"}, "expect": {"status": 401}},
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 200, "body": 1}}
+      ]
+    },
+    {
+      "description": "An invalid `fdap_user` tree is ignored",
+      "setup": {"tokens": ["root"], "db": {"fdap_user": {"bad": true}, "x": 1}},
+      "steps": [
+        {"request": {"method": "GET", "path": ["x"], "token": "dyn"}, "expect": {"status": 401}},
+        {"request": {"method": "GET", "path": ["x"], "token": "root"}, "expect": {"status": 200, "body": 1}}
+      ]
+    }
+  ]
+}
